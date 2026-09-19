@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/hammas159/pak-law-assistant/actions/workflows/ci.yml"><img src="https://github.com/hammas159/pak-law-assistant/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
+  <a href="https://github.com/hammasbuilds/pak-law-assistant/actions/workflows/ci.yml"><img src="https://github.com/hammasbuilds/pak-law-assistant/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python">
   <img src="https://img.shields.io/badge/dependencies-zero-success" alt="deps">
   <img src="https://img.shields.io/badge/retrieval-BM25-336791" alt="retrieval">
@@ -183,7 +183,7 @@ than one live version of a provision.
   structured provisions and the four demo sections in the tests are illustrative, not
   authoritative. **Do not rely on them.**
 - Urdu support is tokenisation-level. Full bilingual retrieval needs the Urdu
-  normalisation in [`urdu-nlp-toolkit`](https://github.com/hammas159/urdu-nlp-toolkit)
+  normalisation in [`urdu-nlp-toolkit`](https://github.com/hammasbuilds/urdu-nlp-toolkit)
   wired into the analyser — the interface is there, the integration is not.
 - Case law is parsed as citations, not ingested as text. Judicial interpretation is
   frequently where the meaning is, and this retrieves statute only.
@@ -206,7 +206,7 @@ MIT
 ## Run it yourself
 
 ```bash
-git clone https://github.com/hammas159/pak-law-assistant
+git clone https://github.com/hammasbuilds/pak-law-assistant
 cd pak-law-assistant
 
 pip install -e .         # zero dependencies to resolve
