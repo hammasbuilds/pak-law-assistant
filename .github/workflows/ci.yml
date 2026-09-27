@@ -17,7 +17,13 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: pip install pytest ruff
-      - run: ruff check src tests
-      - run: ruff format --check src tests
+      - run: ruff check src tests demo.py demo_mcp.py
+      - run: ruff format --check src tests demo_mcp.py
       - run: pip install -e .
       - run: pytest -q
+      # the README's outputs come from these; a demo that stops running is a stale README
+      - run: python demo.py
+      - run: python demo_mcp.py
+      # the installed entry points, as an MCP client would start them
+      - run: paklaw-mcp --check
+      - run: paklaw-corpus --help

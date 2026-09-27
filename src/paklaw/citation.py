@@ -8,6 +8,8 @@ written forms:
     s. 302 of the Pakistan Penal Code, 1860
     sec 302, P.P.C.
     §302 PPC
+    u/s 302 PPC
+    302 PPC
 
 They must all resolve to the same key, or a retrieval system silently treats them as
 different provisions and an answer citing one will not match a query naming another.
@@ -22,10 +24,18 @@ behave differently:
 Reported citations matter because a statute's *meaning* frequently lives in the case
 law rather than the text, and a system that can parse the text but not the case citation
 cannot follow the argument.
+
+Two kinds of mistake are worse than missing a citation, and the patterns are built
+against both:
+
+  **reading the wrong provision** — "section 302-B" read as 302, which is murder;
+  "Article 25 QSO" read as the Constitution's Article 25
+  **inventing one** — "Rs. 500" read as "s. 500", "Part 3" as "Article 3"
 """
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 
@@ -43,8 +53,10 @@ STATUTES: dict[str, str] = {
     "qso": "QSO",
     "qanun-e-shahadat": "QSO",
     "qanun e shahadat": "QSO",
+    "qanun-e-shahadat order": "QSO",
     "constitution": "CONST",
     "constitution of pakistan": "CONST",
+    "constitution of the islamic republic of pakistan": "CONST",
     "companies act": "COMPANIES",
     "income tax ordinance": "ITO",
     "sales tax act": "STA",
@@ -57,37 +69,105 @@ STATUTES: dict[str, str] = {
     "prevention of electronic crimes act": "PECA",
 }
 
+# Abbreviations that identify an Act on their own, written as practitioners write them:
+# "302 PPC" with no "section" is ordinary usage. Case-sensitive, so a lower-case word
+# never reads as an Act.
+_BARE_ABBREVIATIONS = ("PPC", "P.P.C.", "CrPC", "Cr.P.C.", "CPC", "C.P.C.", "PECA", "QSO")
+
 # Law reports used in Pakistani practice.
 REPORTS = {"PLD", "SCMR", "CLC", "YLR", "MLD", "PTD", "PLC", "CLD", "PCrLJ", "NLR"}
 
-_STATUTE_ALTERNATION = "|".join(sorted((re.escape(k) for k in STATUTES), key=len, reverse=True))
+# 302, 302A, 302-B, 20(1), 20(1)(a). The hyphenated form is how 489-F and 354-A are
+# written; without it "302-B" is read as 302, a different offence.
+_NUMBER = r"\d{1,4}(?!\d)(?:-?[A-Z]{1,3}(?![a-z]))?(?:\(\d{1,3}[A-Z]?\))*(?:\([a-z]{1,4}\))?"
+# Later members of a list — "sections 302/34", "302, 34 and 109". At most three digits, so
+# "section 20, 2016" does not read the year as a second section.
+_LIST_MEMBER = r"\d{1,3}(?!\d)(?:-?[A-Z]{1,3}(?![a-z]))?(?:\(\d{1,3}[A-Z]?\))*(?:\([a-z]{1,4}\))?"
+_LIST = rf"{_NUMBER}(?:\s*(?:/|,|&|\band\b)\s*{_LIST_MEMBER})*"
+_MEMBER = re.compile(_NUMBER, re.I)
 
-# "Section 302 PPC", "s. 302 of the Pakistan Penal Code", "§302 PPC"
-_SECTION = re.compile(
-    r"(?:section|sec\.?|s\.|§)\s*"
-    r"(?P<number>\d+[A-Z]{0,2}(?:\(\d+\))?(?:\([a-z]\))?)"
-    r"(?:\s*,?\s*(?:of\s+the\s+)?(?P<statute>" + _STATUTE_ALTERNATION + r"))?",
-    re.I,
-)
+# A letter immediately before the marker means it is the end of a word: "Rs. 500",
+# "Part 3", "chart 5". None of those is a citation.
+_NOT_AFTER_LETTER = r"(?<![A-Za-z])"
 
-# "Article 25 of the Constitution", "Art. 199"
-_ARTICLE = re.compile(
-    r"(?:article|art\.?)\s*"
-    r"(?P<number>\d+[A-Z]{0,2}(?:\(\d+\))?(?:\([a-z]\))?)"
-    r"(?:\s*,?\s*(?:of\s+the\s+)?(?P<statute>constitution(?:\s+of\s+pakistan)?))?",
-    re.I,
-)
+
+def normalise_number(number: str) -> str:
+    """One spelling per provision: '489-f' -> '489F', '20(1)(A)' -> '20(1)(a)'.
+
+    The base is upper-cased and de-hyphenated because both forms appear for the same
+    section; a clause letter stays lower-case because that is how it is cited.
+    """
+    number = str(number).strip()
+    match = re.match(r"(\d+)-?([A-Za-z]*)(.*)$", number)
+    if not match:
+        return number.upper()
+    digits, letters, rest = match.groups()
+    return f"{digits}{letters.upper()}{rest.lower()}"
+
+
+def _names(extra: tuple[str, ...]) -> str:
+    return "|".join(
+        sorted((re.escape(k) for k in set(STATUTES) | set(extra)), key=len, reverse=True)
+    )
+
+
+@functools.lru_cache(maxsize=16)
+def _patterns(extra: tuple[str, ...] = ()) -> tuple[re.Pattern, re.Pattern, re.Pattern]:
+    """Section, article and bare-abbreviation patterns for a set of statute names.
+
+    Built per set, because a corpus can hold Acts this module has never heard of:
+    without them, "section 5 PRPA" parses as a bare "section 5" of no Act.
+    """
+    names = _names(extra)
+    statute = r"(?:\s*,?\s*(?:of\s+the\s+|of\s+)?(?P<statute>" + names + r")(?![A-Za-z]))?"
+    section = re.compile(
+        _NOT_AFTER_LETTER
+        + r"(?:sections?|secs?\.?|ss?\.|§§?|u/ss?\.?)\s*(?P<numbers>"
+        + _LIST
+        + r")"
+        + statute,
+        re.I,
+    )
+    article = re.compile(
+        _NOT_AFTER_LETTER + r"(?:articles?|arts?\.)\s*(?P<numbers>" + _LIST + r")" + statute,
+        re.I,
+    )
+    bare_names = sorted(
+        {re.escape(a) for a in _BARE_ABBREVIATIONS} | {re.escape(k) for k in extra_keys(extra)},
+        key=len,
+        reverse=True,
+    )
+    bare = re.compile(
+        r"(?<![\w/.\-§])(?P<numbers>\d{1,3}(?!\d)(?:-[A-Z])?)\s+(?P<statute>"
+        + "|".join(bare_names)
+        + r")(?![A-Za-z])"
+    )
+    return section, article, bare
+
+
+def extra_keys(extra: tuple[str, ...]) -> set[str]:
+    """Upper-case keys of corpus-only statutes, usable bare like "5 PRPA"."""
+    return {e.upper() for e in extra if e.isalpha()}
+
+
+def statute_aliases(keys) -> dict[str, str]:
+    """Lower-cased name -> key for statute keys the built-in table does not know."""
+    known = set(STATUTES.values())
+    return {k.lower(): k for k in keys if k and k not in known}
+
 
 # "Order XXXIX Rule 1 CPC" - civil procedure is cited by Order and Rule, not section.
 _ORDER_RULE = re.compile(
-    r"order\s+(?P<order>[IVXLC]+)\s*,?\s*rule\s+(?P<rule>\d+)"
+    _NOT_AFTER_LETTER + r"order\s+(?P<order>[IVXLC]+)\s*,?\s*r(?:ule|\.)\s*(?P<rule>\d+)"
     r"(?:\s*,?\s*(?:of\s+the\s+)?(?P<statute>cpc|c\.p\.c\.|code of civil procedure))?",
     re.I,
 )
 
 # "SRO 1125(I)/2011" - subordinate legislation.
 _SRO = re.compile(
-    r"s\.?r\.?o\.?\s*(?P<number>\d+)\s*(?:\((?P<series>[IVX]+)\))?\s*/\s*(?P<year>\d{4})", re.I
+    _NOT_AFTER_LETTER
+    + r"s\.?r\.?o\.?\s*(?P<number>\d+)\s*(?:\((?P<series>[IVX]+)\))?\s*/\s*(?P<year>\d{4})",
+    re.I,
 )
 
 # "PLD 2015 SC 401", "2019 SCMR 1234" - both orderings occur in practice.
@@ -105,7 +185,7 @@ _REPORT_B = re.compile(
 class Citation:
     kind: str  # "statutory" | "subordinate" | "reported"
     statute: str = ""  # canonical key, e.g. "PPC"
-    provision: str = ""  # "302", "25", "XXXIX/1"
+    provision: str = ""  # "302", "302B", "25", "XXXIX/1", "20(1)(a)"
     unit: str = ""  # "section" | "article" | "rule"
     report: str = ""
     year: str = ""
@@ -127,6 +207,10 @@ class Citation:
             return " ".join(x for x in (self.report, self.year, self.court, self.page) if x)
         if self.kind == "subordinate":
             return f"SRO {self.provision}/{self.year}"
+        if self.unit == "rule" and "/" in self.provision:
+            # Written the way it is cited; "Rule XXXIX/1 CPC" is in no judgment.
+            order, rule = self.provision.split("/", 1)
+            return f"Order {order} Rule {rule} {self.statute}".strip()
         label = {"section": "Section", "article": "Article", "rule": "Rule"}.get(
             self.unit, self.unit.title()
         )
@@ -143,7 +227,7 @@ def _canonical_statute(text: str | None, default: str = "") -> str:
     """
     if not text:
         return default
-    cleaned = text.strip().lower()
+    cleaned = re.sub(r"\s+", " ", text.strip().lower())
     return (
         STATUTES.get(cleaned)
         or STATUTES.get(cleaned.rstrip("."))
@@ -152,104 +236,126 @@ def _canonical_statute(text: str | None, default: str = "") -> str:
     )
 
 
-def parse(text: str) -> list[Citation]:
-    """Every citation in a passage, in order of appearance.
+CANONICAL_STATUTES = sorted(set(STATUTES.values()))
+
+
+def normalise_statute(value: str) -> str | None:
+    """A canonical key from the key itself in any case ("peca") or any name the parser
+    knows ("Pakistan Penal Code", "P.P.C."). None when it is neither."""
+    lowered = value.strip().lower()
+    for key in CANONICAL_STATUTES:
+        if key.lower() == lowered:
+            return key
+    return _canonical_statute(lowered) or None
+
+
+def parse(text: str, *, statutes: dict[str, str] | None = None) -> list[Citation]:
+    """Every citation in a passage, in order of appearance."""
+    return [citation for _, citation in locate(text, statutes=statutes)]
+
+
+def locate(text: str, *, statutes: dict[str, str] | None = None) -> list[tuple[int, Citation]]:
+    """`parse`, with the character offset where each citation starts.
 
     Overlaps are resolved by consuming matched spans: "Order XXXIX Rule 1 CPC" must not
     also yield a bare rule, or one citation becomes two and the count of authorities in
-    an answer is wrong.
-    """
-    found: list[tuple[int, Citation]] = []
-    consumed: list[tuple[int, int]] = []
+    an answer is wrong. Consumed spans are marked in a byte mask, so the cost is linear
+    in the text rather than quadratic in the number of citations.
 
-    def overlaps(start: int, end: int) -> bool:
-        return any(start < e and end > s for s, e in consumed)
+    `statutes` adds names beyond the built-in table (lower-cased name -> key), for Acts a
+    corpus holds that this module does not know; see `statute_aliases`.
+    """
+    extra = statutes or {}
+    section_pattern, article_pattern, bare_pattern = _patterns(tuple(sorted(extra)))
+    found: list[tuple[int, Citation]] = []
+    consumed = bytearray(len(text))
+
+    def claim(match: re.Match) -> bool:
+        start, end = match.span()
+        if any(consumed[start:end]):
+            return False
+        consumed[start:end] = b"\x01" * (end - start)
+        return True
+
+    def statute_of(named: str | None, default: str = "") -> str:
+        if not named:
+            return default
+        return extra.get(named.lower()) or _canonical_statute(named, default)
 
     for match in _ORDER_RULE.finditer(text):
-        consumed.append(match.span())
-        found.append(
-            (
-                match.start(),
-                Citation(
-                    kind="statutory",
-                    statute=_canonical_statute(match.group("statute"), "CPC"),
-                    provision=f"{match.group('order').upper()}/{match.group('rule')}",
-                    unit="rule",
-                    raw=match.group(0),
-                ),
-            )
-        )
-
-    for match in _SRO.finditer(text):
-        if overlaps(*match.span()):
-            continue
-        consumed.append(match.span())
-        found.append(
-            (
-                match.start(),
-                Citation(
-                    kind="subordinate",
-                    provision=match.group("number"),
-                    year=match.group("year"),
-                    raw=match.group(0),
-                ),
-            )
-        )
-
-    for pattern in (_REPORT_A, _REPORT_B):
-        for match in pattern.finditer(text):
-            if overlaps(*match.span()):
-                continue
-            consumed.append(match.span())
+        if claim(match):
             found.append(
                 (
                     match.start(),
                     Citation(
-                        kind="reported",
-                        report=match.group("report").upper(),
-                        year=match.group("year"),
-                        court=(match.group("court") or "").upper(),
-                        page=match.group("page"),
+                        kind="statutory",
+                        statute=_canonical_statute(match.group("statute"), "CPC"),
+                        provision=f"{match.group('order').upper()}/{match.group('rule')}",
+                        unit="rule",
                         raw=match.group(0),
                     ),
                 )
             )
 
-    for match in _ARTICLE.finditer(text):
-        if overlaps(*match.span()):
-            continue
-        consumed.append(match.span())
-        found.append(
-            (
-                match.start(),
-                Citation(
-                    kind="statutory",
-                    statute="CONST",
-                    provision=match.group("number").upper(),
-                    unit="article",
-                    raw=match.group(0),
-                ),
+    for match in _SRO.finditer(text):
+        if claim(match):
+            found.append(
+                (
+                    match.start(),
+                    Citation(
+                        kind="subordinate",
+                        provision=match.group("number"),
+                        year=match.group("year"),
+                        raw=match.group(0),
+                    ),
+                )
             )
-        )
 
-    for match in _SECTION.finditer(text):
-        if overlaps(*match.span()):
-            continue
-        consumed.append(match.span())
-        found.append(
-            (
-                match.start(),
-                Citation(
-                    kind="statutory",
-                    statute=_canonical_statute(match.group("statute")),
-                    provision=match.group("number").upper(),
-                    unit="section",
-                    raw=match.group(0),
-                ),
-            )
-        )
+    for pattern in (_REPORT_A, _REPORT_B):
+        for match in pattern.finditer(text):
+            if claim(match):
+                found.append(
+                    (
+                        match.start(),
+                        Citation(
+                            kind="reported",
+                            report=match.group("report").upper(),
+                            year=match.group("year"),
+                            court=(match.group("court") or "").upper(),
+                            page=match.group("page"),
+                            raw=match.group(0),
+                        ),
+                    )
+                )
 
-    return [citation for _, citation in sorted(found, key=lambda pair: pair[0])]
+    # Articles belong to the Constitution unless another instrument is named: the
+    # Qanun-e-Shahadat Order is also numbered in articles, and "Article 25 QSO" is not
+    # the equality clause.
+    listed = (
+        (article_pattern, "article", "CONST"),
+        (section_pattern, "section", ""),
+        (bare_pattern, "section", ""),
+    )
+    for pattern, unit, default in listed:
+        for match in pattern.finditer(text):
+            if not claim(match):
+                continue
+            statute = statute_of(match.group("statute"), default)
+            for number in _MEMBER.findall(match.group("numbers")):
+                found.append(
+                    (
+                        match.start(),
+                        Citation(
+                            kind="statutory",
+                            statute=statute,
+                            provision=normalise_number(number),
+                            unit=unit,
+                            raw=match.group(0),
+                        ),
+                    )
+                )
+
+    return sorted(found, key=lambda pair: pair[0])
 
 
 def resolve_bare(citations: list[Citation], *, default_statute: str) -> list[Citation]:

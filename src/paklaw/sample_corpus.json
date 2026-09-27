@@ -1,0 +1,39 @@
+[
+  {
+    "statute": "PECA",
+    "unit": "section",
+    "number": "20",
+    "heading": "Offences against dignity of a natural person",
+    "text": "Whoever intentionally and publicly exhibits or displays or transmits any information which he knows to be false, and intimidates or harms the reputation or privacy of a natural person, shall be punished with imprisonment which may extend to three years or with fine which may extend to one million rupees or with both.",
+    "in_force_from": "2016-08-19",
+    "in_force_to": "2022-02-20",
+    "manner": "substituted",
+    "amended_by": "Ordinance II of 2022",
+    "superseded_by": "PECA s.20 as amended 2022"
+  },
+  {
+    "statute": "PECA",
+    "unit": "section",
+    "number": "20",
+    "heading": "Offences against dignity of a natural person",
+    "text": "Whoever intentionally and publicly exhibits or displays or transmits any information through any information system, which he knows to be false, and intimidates or harms the reputation or privacy of a natural person, shall be punished with imprisonment which may extend to five years or with fine which may extend to ten million rupees or with both.",
+    "in_force_from": "2022-02-20",
+    "enacted_by": "Ordinance II of 2022"
+  },
+  {
+    "statute": "PPC",
+    "unit": "section",
+    "number": "302",
+    "heading": "Punishment of qatl-i-amd",
+    "text": "Whoever commits qatl-i-amd shall be punished with death as qisas, or with death or imprisonment for life as tazir.",
+    "in_force_from": "1997-04-11"
+  },
+  {
+    "statute": "CONST",
+    "unit": "article",
+    "number": "25",
+    "heading": "Equality of citizens",
+    "text": "All citizens are equal before law and are entitled to equal protection of law. There shall be no discrimination on the basis of sex.",
+    "in_force_from": "1973-08-14"
+  }
+]

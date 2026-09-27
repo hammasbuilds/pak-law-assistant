@@ -106,6 +106,7 @@ class TestCitationParsing:
         citations = parse("Order XXXIX Rule 1 CPC governs injunctions")
         assert len(citations) == 1
         assert citations[0].provision == "XXXIX/1"
+        assert citations[0].pretty() == "Order XXXIX Rule 1 CPC"
 
     def test_subordinate_legislation(self):
         assert parse("Notified via SRO 1125(I)/2011")[0].key == "SRO:1125:2011"
@@ -307,6 +308,14 @@ class TestAnswering:
         assert REFUSAL_NOT_IN_FORCE in result.refusal_reason
         assert result.superseded
 
+    def test_a_date_before_enactment_names_the_first_commencement(self):
+        """PECA s.20 was enacted in 2016 and substituted in 2022. Asked about 2015, the
+        refusal once described the 2022 version and said it "commenced 2022-02-20"."""
+        result = assistant().answer("section 20 PECA", as_of="2015-01-01")
+        assert result.refused
+        assert "commenced 2016-08-19" in result.refusal_reason
+        assert "2022" not in result.superseded[0]["status"]
+
     def test_an_unknown_citation_is_refused_not_approximated(self):
         result = assistant().answer("What does section 999 PECA say?", as_of="2026-01-01")
         assert result.refused
@@ -349,3 +358,17 @@ class TestAnswering:
 
     def test_history_requires_a_citation(self):
         assert "error" in assistant().history("what changed recently")
+
+
+class TestCitationEdges:
+    def test_a_statute_name_does_not_bind_to_the_front_of_a_longer_word(self):
+        assert parse("section 5 PPCX")[0].statute == ""
+
+    def test_extra_statutes(self):
+        c = parse("section 5 of the PRPA", statutes={"prpa": "PRPA"})[0]
+        assert c.key == "PRPA:section:5"
+
+    def test_subsection_resolves_to_its_section(self):
+        c = corpus()
+        assert c.resolve("PECA:section:20(1)(a)") == "PECA:section:20"
+        assert c.resolve("PECA:section:21(1)") == "PECA:section:21(1)"  # nothing to fall to

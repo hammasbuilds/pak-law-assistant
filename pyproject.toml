@@ -1,12 +1,33 @@
 [project]
 name = "pak-law-assistant"
-version = "0.1.0"
-description = "Bilingual legal question answering over Pakistani statutes, with temporal validity: it will not cite a repealed provision."
+version = "0.2.0"
+description = "Legal question answering and citation checking over Pakistani statutes, with temporal validity: it will not cite a repealed provision. Includes an MCP server."
+authors = [{ name = "Muhammad Hammas" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Legal Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing :: Linguistic",
+]
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-keywords = ["legal", "rag", "pakistan", "bm25", "statute", "urdu"]
+keywords = ["legal", "rag", "pakistan", "bm25", "statute", "urdu", "mcp", "mcp-server"]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/hammasbuilds/pak-law-assistant"
+Issues = "https://github.com/hammasbuilds/pak-law-assistant/issues"
+
+[project.scripts]
+paklaw-mcp = "paklaw.mcp_server:main"
+paklaw-corpus = "paklaw.ingest:main"
 
 [dependency-groups]
 dev = ["pytest>=8.3", "ruff>=0.8"]

@@ -19,11 +19,12 @@ Implemented from the formula. It is a sum over query terms.
 
 from __future__ import annotations
 
+import bisect
 import datetime as dt
 import math
 import re
-from collections import Counter
-from collections.abc import Sequence
+from collections import Counter, OrderedDict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from .corpus import Corpus, Provision
@@ -76,6 +77,43 @@ LEGAL_STOPWORDS = {
     "if",
     "than",
     "then",
+    # Penal boilerplate: nearly every offence begins "Whoever commits ... shall be
+    # punished", so these words match a murder section to a question about theft.
+    "whoever",
+    "person",
+    "persons",
+    "commit",
+    "commits",
+    "committed",
+    "punished",
+    "punishable",
+    "liable",
+    # Question words. A question is phrased around them and no provision is about them.
+    "what",
+    "when",
+    "how",
+    "why",
+    "can",
+    "could",
+    "does",
+    "do",
+    "did",
+    "i",
+    "me",
+    "my",
+    "we",
+    "our",
+    "you",
+    "your",
+    "they",
+    "their",
+    "his",
+    "her",
+    "him",
+    "about",
+    "there",
+    "law",
+    "legal",
 }
 
 
@@ -97,6 +135,14 @@ class Hit:
     provision: Provision
     score: float
     matched_terms: dict[str, float] = field(default_factory=dict)
+    # Distinct content terms of the question this provision does not contain.
+    missing_terms: list[str] = field(default_factory=list)
+
+    @property
+    def coverage(self) -> float:
+        """Share of the question's content terms the provision contains."""
+        total = len(self.matched_terms) + len(self.missing_terms)
+        return len(self.matched_terms) / total if total else 0.0
 
     def why(self) -> str:
         """Why this provision was returned, in terms a lawyer can check."""
@@ -148,7 +194,14 @@ class BM25Index:
         # little rather than subtracting score from documents that contain it.
         return math.log(1 + (n - df + 0.5) / (df + 0.5))
 
-    def search(self, query: str, *, limit: int = 5) -> list[Hit]:
+    def search(
+        self, query: str, *, limit: int = 5, where: Callable[[Provision], bool] | None = None
+    ) -> list[Hit]:
+        """Top `limit` hits among the provisions `where` accepts.
+
+        The filter is applied before the cut, not after: filtering the top nine for one
+        Act finds nothing when the other Act's provisions happen to score higher.
+        """
         if not self.documents:
             return []
 
@@ -158,6 +211,8 @@ class BM25Index:
 
         hits: list[Hit] = []
         for index, provision in enumerate(self.documents):
+            if where is not None and not where(provision):
+                continue
             frequencies = self._frequencies[index]
             length = len(self._tokens[index])
             score = 0.0
@@ -176,7 +231,15 @@ class BM25Index:
                 matched[term] = round(contribution, 4)
 
             if score > 0:
-                hits.append(Hit(provision=provision, score=round(score, 6), matched_terms=matched))
+                missing = sorted(set(terms) - set(matched))
+                hits.append(
+                    Hit(
+                        provision=provision,
+                        score=round(score, 6),
+                        matched_terms=matched,
+                        missing_terms=missing,
+                    )
+                )
 
         hits.sort(key=lambda h: -h.score)
         return hits[:limit]
@@ -192,12 +255,36 @@ class LawSearch:
     """
 
     corpus: Corpus
-    _indexes: dict[str, BM25Index] = field(default_factory=dict)
+    # One index per date asked about. A long-running server is asked about arbitrarily
+    # many dates, so the cache is bounded; the least recently used index is dropped.
+    max_indexes: int = 32
+    _indexes: OrderedDict[int, BM25Index] = field(default_factory=OrderedDict)
+    _boundaries: list[dt.date] = field(default_factory=list)
+    _boundaries_for: int = -1
+
+    def _epoch(self, as_of: dt.date) -> int:
+        """Which interval between consecutive commencements/repeals a date falls in.
+
+        Every date in one interval sees exactly the same provisions, so they share an
+        index: 2020-06-01 and 2021-03-15 are one index, not two.
+        """
+        size = len(self.corpus)
+        if self._boundaries_for != size:
+            dates = {p.in_force_from for p in self.corpus}
+            dates |= {p.in_force_to for p in self.corpus if p.in_force_to}
+            self._boundaries = sorted(dates)
+            self._boundaries_for = size
+            self._indexes.clear()
+        return bisect.bisect_right(self._boundaries, as_of)
 
     def _index_for(self, as_of: dt.date) -> BM25Index:
-        key = as_of.isoformat()
-        if key not in self._indexes:
+        key = self._epoch(as_of)
+        if key in self._indexes:
+            self._indexes.move_to_end(key)
+        else:
             self._indexes[key] = BM25Index().fit(self.corpus.as_of(as_of))
+            while len(self._indexes) > self.max_indexes:
+                self._indexes.popitem(last=False)
         return self._indexes[key]
 
     def search(
@@ -209,10 +296,8 @@ class LawSearch:
         statute: str | None = None,
     ) -> list[Hit]:
         as_of = dt.date.fromisoformat(as_of) if isinstance(as_of, str) else as_of
-        hits = self._index_for(as_of).search(query, limit=limit * 3)
-        if statute:
-            hits = [h for h in hits if h.provision.statute == statute]
-        return hits[:limit]
+        where = (lambda p: p.statute == statute) if statute else None
+        return self._index_for(as_of).search(query, limit=limit, where=where)
 
     def by_citation(self, key: str, *, as_of: str | dt.date) -> Provision | None:
         """Look up a provision the user named directly.

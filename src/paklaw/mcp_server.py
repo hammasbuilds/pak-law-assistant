@@ -1,0 +1,725 @@
+"""The statute book as an MCP server — standard library only.
+
+    paklaw-mcp --corpus statutes.jsonl
+    python -m paklaw.mcp_server --corpus statutes.jsonl
+
+Speaks the Model Context Protocol over stdio: newline-delimited JSON-RPC 2.0 on stdin
+and stdout, diagnostics on stderr. Written against the protocol rather than an SDK so the
+package keeps `dependencies = []`; the tests drive it as a subprocess, byte for byte, the
+way a client does.
+
+What it exposes is the library's behaviour, not a looser version of it:
+
+  **answer_question**    cite a provision in force on a date, or refuse — the four
+                         refusal conditions come through as answers, not errors
+  **check_citations**    every citation in a draft, checked against the law on a date
+  **provision_history**  the amendment trail of a named provision
+  **compare_versions**   what an amendment changed, word by word
+  **list_provisions**    a statute's table of contents on a date
+  **changes_between**    every commencement, substitution and repeal in a period
+  **parse_citations**    every citation in a passage, canonicalised; needs no corpus
+  **corpus_info**        what the loaded corpus actually covers
+
+Two choices are deliberate.
+
+**Dates are required.** The library defaults `as_of` to today, but a model calling a tool
+fills an optional argument by omission, and the question most likely to need a past
+date — conduct before an amendment — is exactly the one where today is wrong.
+
+**There is no bare search tool.** Raw BM25 hits are the nearest provisions, whether or
+not they are relevant, and a model handed a ranked list cites the top one. The only way
+to reach retrieval is through `answer_question`, which applies the weak-match refusal.
+
+A corpus is loaded once, at start, and **validated before the server accepts a
+request**: overlapping versions make answers depend on iteration order, so a corpus
+with any structural problem is refused rather than served. With no corpus configured
+the server runs on a three-provision sample, and says so in every result.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import math
+import os
+import re
+import sys
+from collections import Counter
+from importlib import resources
+from typing import Any, BinaryIO
+
+from . import __version__
+from .answer import Answer, LawAssistant
+from .audit import changes_between, check_citations, compare_versions, contents
+from .citation import CANONICAL_STATUTES, normalise_statute, parse, statute_aliases
+from .corpus import Corpus, CorpusError
+from .ingest import build_checked, read_rows
+
+# Newest first. A client asking for one of these gets it; anything else gets the newest.
+PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+
+SERVER_NAME = "pak-law-assistant"
+CORPUS_ENV = "PAKLAW_CORPUS"
+
+SAMPLE_WARNING = (
+    "sample corpus: three demonstration provisions (PECA s.20 in two versions, PPC s.302, "
+    "Article 25) with illustrative, unofficial wording — not the statute book and not to "
+    f"be relied on. Set {CORPUS_ENV} to a corpus file to answer real questions."
+)
+
+PARSE_ERROR = -32700
+INVALID_REQUEST = -32600
+METHOD_NOT_FOUND = -32601
+INVALID_PARAMS = -32602
+INTERNAL_ERROR = -32603
+
+LIST_LIMIT = 200
+EVENT_LIMIT = 500
+CITATION_LIMIT = 500
+# A draft, a judgment, a chapter of an Act: comfortably under this. Past it the answer
+# would be several megabytes, which no client displays and no model reads.
+TEXT_LIMIT = 200_000
+
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+INSTRUCTIONS = (
+    "Pakistani statutes, versioned by date. Every provision carries the dates it was in "
+    "force, so always pass the date the question is ABOUT — the date of the conduct, the "
+    "contract or the hearing — not today's date by habit. "
+    "A refusal is an answer: it means the corpus cannot support one, and must not be "
+    "replaced with a provision from memory. Quote passage text as returned and cite it "
+    "exactly; the text is the law, anything you add is not. "
+    "Before relying on citations in any draft — yours or the user's — run check_citations. "
+    "Call corpus_info first to see which statutes are loaded; a statute that is not loaded "
+    "cannot be answered from or verified."
+)
+
+
+def _date_property(what: str) -> dict:
+    return {"type": "string", "description": f"YYYY-MM-DD. {what}"}
+
+
+_STATUTE = {
+    "type": "string",
+    "description": (
+        "One statute, by key or common name (PPC, CrPC, CPC, CONST, PECA, "
+        "'Pakistan Penal Code', ...). corpus_info lists what is loaded."
+    ),
+}
+_READ_ONLY = {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False}
+
+
+def _tool(name: str, title: str, description: str, properties: dict, required: list) -> dict:
+    return {
+        "name": name,
+        "title": title,
+        "description": description,
+        "inputSchema": {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        },
+        "annotations": _READ_ONLY,
+    }
+
+
+TOOLS: list[dict[str, Any]] = [
+    _tool(
+        "answer_question",
+        "Answer from the statute book",
+        "Answer a legal question with the text of provisions in force on a date, each with "
+        "its citation — or refuse. A question that cites a provision ('section 20 PECA') is "
+        "a lookup of exactly that provision; otherwise it is a search. Refusals: nothing "
+        "matched, the match was too weak, the cited provision was not in force on that "
+        "date (its history is returned), or it is not in the corpus.",
+        {
+            "question": {"type": "string", "description": "The question, in English."},
+            "as_of": _date_property(
+                "The date the question is about. Law changes; the answer for 2020 and for "
+                "today can differ."
+            ),
+            "statute": {
+                **_STATUTE,
+                "description": _STATUTE["description"]
+                + " Restricts the search, and attaches the statute to a bare 'section 302'.",
+            },
+        },
+        ["question", "as_of"],
+    ),
+    _tool(
+        "check_citations",
+        "Check every citation in a draft",
+        "Audit a draft — a brief, a notice, an answer a model wrote — for citations that were "
+        "not good law on a date. Each citation gets a status: in_force, not_in_force "
+        "(repealed or substituted), not_yet_in_force, unknown_provision, no_act_named, "
+        "statute_not_loaded, or not_checkable (case law, SROs). The verdict is "
+        "'all_in_force' only when every citation was checked and passed.",
+        {
+            "text": {"type": "string", "description": "The draft, up to 200,000 characters."},
+            "as_of": _date_property("The date the draft speaks about."),
+            "default_statute": {
+                **_STATUTE,
+                "description": "The Act a bare 'section 9' in the draft belongs to. "
+                "Never guessed when omitted.",
+            },
+            "offset": {"type": "integer", "minimum": 0, "description": "Default 0."},
+        },
+        ["text", "as_of"],
+    ),
+    _tool(
+        "provision_history",
+        "Amendment history of a provision",
+        "Every version of one provision, oldest first: when each came into force, when and "
+        "how it ceased (repealed, substituted, omitted), and what amended it. Use for 'when "
+        "did this change' and 'which version applied then'.",
+        {
+            "citation": {
+                "type": "string",
+                "description": "A citation in any common form: 'Section 20 PECA', "
+                "'s. 302 of the Pakistan Penal Code', 'Article 25'.",
+            },
+            "statute": {**_STATUTE, "description": "The Act, if the citation omits it."},
+            "with_text": {
+                "type": "boolean",
+                "description": "Include each version's full text. Default false.",
+            },
+        },
+        ["citation"],
+    ),
+    _tool(
+        "compare_versions",
+        "What an amendment changed",
+        "The text of one provision as it stood on two dates, and a word-level list of what "
+        "differs — 'three years' became 'five years'. Use when asked what an amendment did, "
+        "or whether conduct on one date is judged by different words than today.",
+        {
+            "citation": {"type": "string", "description": "e.g. 'section 20 PECA'."},
+            "before": _date_property("The earlier date."),
+            "after": _date_property("The later date."),
+            "statute": {**_STATUTE, "description": "The Act, if the citation omits it."},
+        },
+        ["citation", "before", "after"],
+    ),
+    _tool(
+        "list_provisions",
+        "Contents of a statute",
+        "The provisions of one statute in force on a date — citation, heading, chapter, and "
+        f"whether it has been amended — in statute order. Pages of {LIST_LIMIT}; pass "
+        "offset to continue.",
+        {
+            "statute": _STATUTE,
+            "as_of": _date_property("The date whose statute book to list."),
+            "offset": {"type": "integer", "minimum": 0, "description": "Default 0."},
+        },
+        ["statute", "as_of"],
+    ),
+    _tool(
+        "changes_between",
+        "What changed in a period",
+        "Every commencement, substitution, omission and repeal between two dates, oldest "
+        "first, optionally for one statute. A substitution is one event, not a repeal and "
+        "an unrelated commencement.",
+        {
+            "start": _date_property("Start of the period, inclusive."),
+            "end": _date_property("End of the period, inclusive."),
+            "statute": _STATUTE,
+            "offset": {"type": "integer", "minimum": 0, "description": "Default 0."},
+        },
+        ["start", "end"],
+    ),
+    _tool(
+        "parse_citations",
+        "Parse legal citations",
+        "Find every Pakistani legal citation in a passage and resolve each to one canonical "
+        "key, so 'Section 302 PPC', 's. 302 of the Pakistan Penal Code' and '§302 PPC' "
+        "agree. Handles statutory provisions, Order/Rule CPC, SROs and reported judgments "
+        "(PLD, SCMR, CLC, YLR ...). Needs no corpus; to check the citations against the "
+        "law, use check_citations.",
+        {
+            "text": {"type": "string", "description": "Any passage of legal text."},
+            "default_statute": {
+                **_STATUTE,
+                "description": "The Act a bare 'section 302' belongs to, when the "
+                "surrounding document makes it clear. Never guessed when omitted.",
+            },
+            "offset": {"type": "integer", "minimum": 0, "description": "Default 0."},
+        },
+        ["text"],
+    ),
+    _tool(
+        "corpus_info",
+        "What the corpus covers",
+        "Which statutes are loaded, how many provisions and versions each has, the date "
+        "range covered, and whether this is the demonstration sample. A statute that is "
+        "not listed here cannot be answered from.",
+        {},
+        [],
+    ),
+]
+
+
+class ToolError(ValueError):
+    """A bad argument. Reported to the model as a tool result it can correct, not a crash."""
+
+
+class ProtocolError(Exception):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+# ---- corpus loading ------------------------------------------------------------------
+
+
+def load_corpus(path: str | None) -> tuple[Corpus, str]:
+    """The corpus and where it came from. Refuses one that fails validation."""
+    if path:
+        corpus = build_checked(read_rows(path), source=str(path))
+        source = str(path)
+    else:
+        sample = resources.files("paklaw").joinpath("sample_corpus.json")
+        corpus = build_checked(json.loads(sample.read_text(encoding="utf-8")), source="sample")
+        source = "sample"
+
+    if not len(corpus):
+        raise CorpusError(f"{source}: the corpus is empty")
+    problems = corpus.validate()
+    if problems:
+        raise CorpusError(
+            f"{source}: {len(problems)} structural problem(s), refusing to serve answers "
+            "that would depend on iteration order:\n  " + "\n  ".join(problems)
+        )
+    return corpus, source
+
+
+# ---- argument handling ---------------------------------------------------------------
+
+
+def _string(arguments: dict, name: str, *, required: bool = False) -> str | None:
+    value = arguments.get(name)
+    if value is None or value == "":
+        if required:
+            raise ToolError(f"'{name}' is required")
+        return None
+    if not isinstance(value, str):
+        raise ToolError(f"'{name}' must be a string, got {type(value).__name__}")
+    if len(value) > TEXT_LIMIT:
+        raise ToolError(
+            f"'{name}' is {len(value):,} characters; the limit is {TEXT_LIMIT:,}. Send it in parts."
+        )
+    return value.strip()
+
+
+def _offset(arguments: dict) -> int:
+    offset = arguments.get("offset", 0)
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise ToolError("offset must be a non-negative integer")
+    return offset
+
+
+def _page(result: dict, field: str, offset: int, limit: int) -> dict:
+    items = result[field]
+    result[field] = items[offset : offset + limit]
+    result["total"] = len(items)
+    if offset + limit < len(items):
+        result["next_offset"] = offset + limit
+    return result
+
+
+def _refusal(result: dict) -> dict:
+    """The library's {"error": ...} as the same refusal shape answer_question uses."""
+    if "error" in result:
+        reason = result.pop("error")
+        return {"refused": True, "refusal_reason": reason, **result}
+    return {"refused": False, **result}
+
+
+def _date(arguments: dict, name: str) -> dt.date:
+    value = _string(arguments, name, required=True)
+    # fromisoformat alone accepts "20260101" on 3.11+ and not on 3.10; one format, everywhere.
+    if not _ISO_DATE.match(value):
+        raise ToolError(f"{name} must be a date as YYYY-MM-DD, got {value!r}")
+    try:
+        return dt.date.fromisoformat(value)
+    except ValueError as exc:
+        raise ToolError(f"{name} is not a real date: {value!r}") from exc
+
+
+def _finite(value: float) -> float | None:
+    # A cited provision is resolved, not scored; the library marks that with infinity,
+    # which JSON cannot carry.
+    return None if math.isinf(value) else value
+
+
+def _first_citation(text: str, statute: str | None, aliases: dict[str, str]) -> str:
+    """The corpus key of the first statutory citation, or a ToolError saying why not."""
+    found = [c for c in parse(text, statutes=aliases) if c.kind == "statutory"]
+    if not found:
+        raise ToolError(f"no statutory citation in {text!r}; try 'section 20 PECA'")
+    c = found[0]
+    act = c.statute or statute
+    if not act:
+        # "section 302" of which Act? Guessing attributes it to the wrong one.
+        raise ToolError(f"{c.pretty()!r} names no Act; add it to the citation or pass statute")
+    return f"{act}:{c.unit}:{c.provision}"
+
+
+# ---- the server ----------------------------------------------------------------------
+
+
+class LawServer:
+    def __init__(self, corpus: Corpus, source: str) -> None:
+        self.corpus = corpus
+        self.source = source
+        self.assistant = LawAssistant(corpus=corpus)
+        self.loaded = sorted({p.statute for p in corpus})
+        self.aliases = statute_aliases(self.loaded)
+        self.protocol_version: str | None = None
+        self._schemas = {t["name"]: t["inputSchema"] for t in TOOLS}
+
+    @property
+    def is_sample(self) -> bool:
+        return self.source == "sample"
+
+    def _statute(self, arguments: dict, name: str, *, required: bool = False) -> str | None:
+        """Canonical key, from a known name or any statute the corpus itself holds."""
+        value = _string(arguments, name, required=required)
+        if value is None:
+            return None
+        for key in self.loaded:
+            if key.lower() == value.lower():
+                return key
+        known = normalise_statute(value)
+        if known:
+            return known
+        raise ToolError(
+            f"unknown statute {value!r}; loaded: {', '.join(self.loaded)}; "
+            f"recognised: {', '.join(CANONICAL_STATUTES)}"
+        )
+
+    def _with_corpus_note(self, result: dict) -> dict:
+        if self.is_sample:
+            result["corpus_warning"] = SAMPLE_WARNING
+        return result
+
+    # ---- tools -----------------------------------------------------------------------
+
+    def answer_question(self, arguments: dict) -> dict:
+        question = _string(arguments, "question", required=True)
+        as_of = _date(arguments, "as_of")
+        statute = self._statute(arguments, "statute")
+
+        answer: Answer = self.assistant.answer(question, as_of=as_of, statute=statute)
+        result = {
+            "question": answer.question,
+            "as_of": answer.as_of,
+            "refused": answer.refused,
+            "refusal_reason": answer.refusal_reason or None,
+            "passages": [
+                {
+                    "citation": p.citation,
+                    "heading": p.heading,
+                    "text": p.text,
+                    "statute": p.statute,
+                    "in_force_from": p.in_force_from,
+                    "in_force_to": p.in_force_to,
+                    "status_note": p.status_note or None,
+                    # "cited" when the question named it: a lookup, not a ranking.
+                    "matched": p.matched_terms,
+                    "score": _finite(p.score),
+                }
+                for p in answer.passages
+            ],
+            "superseded": answer.superseded,
+            "warnings": answer.warnings,
+        }
+        if statute and statute not in self.loaded:
+            result["warnings"].append(f"{statute} is not in this corpus")
+        return self._with_corpus_note(result)
+
+    def check_citations(self, arguments: dict) -> dict:
+        text = _string(arguments, "text", required=True)
+        as_of = _date(arguments, "as_of")
+        default = self._statute(arguments, "default_statute")
+        report = check_citations(self.corpus, text, as_of=as_of, default_statute=default)
+        # Counts and verdict cover every citation; only the listing is paged.
+        return self._with_corpus_note(
+            _page(report, "citations", _offset(arguments), CITATION_LIMIT)
+        )
+
+    def provision_history(self, arguments: dict) -> dict:
+        citation = _string(arguments, "citation", required=True)
+        statute = self._statute(arguments, "statute")
+        with_text = arguments.get("with_text", False)
+        if not isinstance(with_text, bool):
+            raise ToolError("with_text must be true or false")
+        key = _first_citation(citation, statute, self.aliases)
+        result = _refusal(self.assistant.history(citation, statute=statute))
+        resolved = self.corpus.resolve(key)
+        if resolved != key and not result["refused"]:
+            result["warnings"] = [
+                f"{citation} is a subdivision; this is the history of the whole provision"
+            ]
+        if with_text and not result["refused"]:
+            for entry, version in zip(
+                result["history"], self.corpus.versions(resolved), strict=True
+            ):
+                entry["text"] = version.text
+        return self._with_corpus_note(result)
+
+    def compare_versions(self, arguments: dict) -> dict:
+        key = _first_citation(
+            _string(arguments, "citation", required=True),
+            self._statute(arguments, "statute"),
+            self.aliases,
+        )
+        before, after = _date(arguments, "before"), _date(arguments, "after")
+        return self._with_corpus_note(
+            _refusal(compare_versions(self.corpus, key, before=before, after=after))
+        )
+
+    def list_provisions(self, arguments: dict) -> dict:
+        statute = self._statute(arguments, "statute", required=True)
+        as_of = _date(arguments, "as_of")
+        offset = _offset(arguments)
+        if statute not in self.loaded:
+            raise ToolError(f"{statute} is not in this corpus; loaded: {', '.join(self.loaded)}")
+        result = contents(self.corpus, statute, as_of=as_of)
+        return self._with_corpus_note(_page(result, "provisions", offset, LIST_LIMIT))
+
+    def changes_between(self, arguments: dict) -> dict:
+        start, end = _date(arguments, "start"), _date(arguments, "end")
+        statute = self._statute(arguments, "statute")
+        result = changes_between(self.corpus, start, end, statute=statute)
+        return self._with_corpus_note(_page(result, "events", _offset(arguments), EVENT_LIMIT))
+
+    def parse_citations(self, arguments: dict) -> dict:
+        text = _string(arguments, "text", required=True)
+        default = self._statute(arguments, "default_statute")
+
+        found = []
+        for c in parse(text, statutes=self.aliases):
+            if default and c.kind == "statutory" and not c.statute:
+                c = type(c)(**{**c.__dict__, "statute": default})
+            entry = {"kind": c.kind, "citation": c.pretty(), "key": c.key, "raw": c.raw}
+            if c.kind == "statutory":
+                entry["statute"] = c.statute or None
+                entry["in_corpus"] = bool(c.statute) and bool(
+                    self.corpus.versions(self.corpus.resolve(c.key))
+                )
+                if not c.statute:
+                    entry["note"] = "no Act named; pass default_statute if the context says"
+            found.append(entry)
+        result = {"count": len(found), "citations": found}
+        return _page(result, "citations", _offset(arguments), CITATION_LIMIT)
+
+    def corpus_info(self, arguments: dict) -> dict:
+        provisions = list(self.corpus)
+        by_statute: dict[str, Counter] = {}
+        for p in provisions:
+            counts = by_statute.setdefault(p.statute, Counter())
+            counts["versions"] += 1
+            counts["in_force"] += p.currently_in_force
+        distinct = Counter(p.statute for p in {p.key: p for p in provisions}.values())
+
+        return self._with_corpus_note(
+            {
+                "source": self.source,
+                "sample": self.is_sample,
+                "versions": len(provisions),
+                "provisions": sum(distinct.values()),
+                "statutes": [
+                    {
+                        "statute": s,
+                        "provisions": distinct[s],
+                        "versions": by_statute[s]["versions"],
+                        "currently_in_force": by_statute[s]["in_force"],
+                    }
+                    for s in sorted(by_statute)
+                ],
+                "earliest": min(p.in_force_from for p in provisions).isoformat(),
+                "latest_change": max(
+                    max(p.in_force_from, p.in_force_to or p.in_force_from) for p in provisions
+                ).isoformat(),
+            }
+        )
+
+    # ---- protocol --------------------------------------------------------------------
+
+    def _initialize(self, params: dict) -> dict:
+        requested = params.get("protocolVersion")
+        self.protocol_version = (
+            requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
+        )
+        return {
+            "protocolVersion": self.protocol_version,
+            "capabilities": {"tools": {"listChanged": False}},
+            "serverInfo": {"name": SERVER_NAME, "title": "Pakistan law", "version": __version__},
+            "instructions": INSTRUCTIONS,
+        }
+
+    def _call_tool(self, params: dict) -> dict:
+        name = params.get("name")
+        known = {t["name"] for t in TOOLS}
+        if name not in known:
+            raise ProtocolError(INVALID_PARAMS, f"unknown tool: {name!r}")
+        handler = getattr(self, name)
+
+        arguments = params.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            raise ProtocolError(INVALID_PARAMS, "arguments must be an object")
+
+        def failed(message: str) -> dict:
+            return {"content": [{"type": "text", "text": message}], "isError": True}
+
+        # The schemas say additionalProperties: false, so honour it. A misspelt "asof"
+        # silently ignored is a required date silently missing.
+        allowed = set(self._schemas[name]["properties"])
+        unknown = sorted(set(arguments) - allowed)
+        if unknown:
+            return failed(
+                f"unknown argument(s) {', '.join(unknown)}; "
+                f"{name} takes {', '.join(sorted(allowed)) or 'no arguments'}"
+            )
+        try:
+            result = handler(arguments)
+        except ToolError as exc:
+            return failed(str(exc))
+        except Exception as exc:  # a bug in one call must not look like a protocol failure
+            return failed(f"internal error in {name}: {type(exc).__name__}: {exc}")
+
+        payload = {
+            "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
+            "isError": False,
+        }
+        if self.protocol_version == "2025-06-18":
+            payload["structuredContent"] = result
+        return payload
+
+    def handle(self, message: Any) -> dict | None:
+        """One JSON-RPC message in, at most one response out."""
+        if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+            return _error(None, INVALID_REQUEST, "not a JSON-RPC 2.0 message")
+
+        method = message.get("method")
+        if "id" not in message:
+            # Notifications (initialized, cancelled) and responses need no reply, and
+            # this server sends no requests of its own.
+            return None
+        request_id = message["id"]
+        if (
+            request_id is None
+            or isinstance(request_id, bool)
+            or not isinstance(request_id, (str, int))
+        ):
+            # MCP forbids a null id; answering one makes a request look like a notification
+            # that got a reply.
+            return _error(None, INVALID_REQUEST, "id must be a string or an integer")
+        if not isinstance(method, str):
+            if "result" in message or "error" in message:
+                return None
+            return _error(request_id, INVALID_REQUEST, "request has no method")
+
+        params = message.get("params") or {}
+        try:
+            if not isinstance(params, dict):
+                raise ProtocolError(INVALID_PARAMS, "params must be an object")
+            if method == "initialize":
+                result = self._initialize(params)
+            elif method == "ping":
+                result = {}
+            elif method == "tools/list":
+                result = {"tools": TOOLS}
+            elif method == "tools/call":
+                result = self._call_tool(params)
+            else:
+                raise ProtocolError(METHOD_NOT_FOUND, f"method not found: {method}")
+        except ProtocolError as exc:
+            return _error(request_id, exc.code, exc.message)
+        except Exception as exc:  # a bug must not take the server down with it
+            return _error(request_id, INTERNAL_ERROR, f"{type(exc).__name__}: {exc}")
+
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+def _error(request_id: Any, code: int, message: str) -> dict:
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+
+
+def serve(server: LawServer, stdin: BinaryIO, stdout: BinaryIO) -> None:
+    """Read newline-delimited JSON-RPC until stdin closes."""
+    for raw in stdin:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            message = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            reply: Any = _error(None, PARSE_ERROR, f"parse error: {exc}")
+        else:
+            if isinstance(message, list):
+                # Batches exist in 2025-03-26 and were dropped after; answering one costs
+                # nothing and refusing it strands an older client.
+                replies = [r for r in map(server.handle, message) if r is not None]
+                reply = replies or (
+                    None if message else _error(None, INVALID_REQUEST, "empty batch")
+                )
+            else:
+                reply = server.handle(message)
+
+        if reply is not None:
+            stdout.write(json.dumps(reply, ensure_ascii=False, allow_nan=False).encode() + b"\n")
+            stdout.flush()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="paklaw-mcp",
+        description="MCP server (stdio) over a versioned corpus of Pakistani statutes.",
+    )
+    parser.add_argument(
+        "--corpus",
+        default=os.environ.get(CORPUS_ENV) or None,
+        help=f"JSON array or JSON Lines of provisions (default: ${CORPUS_ENV}, else the "
+        "three-provision sample). Build one with paklaw-corpus.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="load and validate the corpus, print what it covers, and exit",
+    )
+    parser.add_argument("--version", action="version", version=f"paklaw-mcp {__version__}")
+    args = parser.parse_args(argv)
+    # Windows defaults stderr to the ANSI code page, and an em dash in a diagnostic
+    # reaches the client's log as a stray byte.
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+    try:
+        corpus, source = load_corpus(args.corpus)
+    except (OSError, json.JSONDecodeError, CorpusError) as exc:
+        print(f"paklaw-mcp: cannot load corpus: {exc}", file=sys.stderr)
+        return 2
+
+    server = LawServer(corpus, source)
+    info = server.corpus_info({})
+    if args.check:
+        print(json.dumps(info, indent=2, ensure_ascii=False))
+        return 0
+
+    print(
+        f"paklaw-mcp {__version__}: {info['provisions']} provisions "
+        f"({info['versions']} versions) from {source}",
+        file=sys.stderr,
+    )
+    if server.is_sample:
+        print(f"paklaw-mcp: {SAMPLE_WARNING}", file=sys.stderr)
+    serve(server, sys.stdin.buffer, sys.stdout.buffer)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

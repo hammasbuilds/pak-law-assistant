@@ -22,10 +22,16 @@ unanswerable.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
-from .citation import Citation
+from .citation import Citation, normalise_number
+
+UNITS = {"section", "article", "rule"}
+
+# "(1)", "(1)(a)" after a provision number: subsections and clauses.
+_SUBDIVISION = re.compile(r"(?:\([0-9a-z]+\))+$", re.I)
 
 
 class CorpusError(ValueError):
@@ -54,15 +60,42 @@ class Provision:
     superseded_by: str = ""
     # How it ceased: "repealed", "substituted", "omitted".
     manner: str = ""
+    # The instrument that ENDED this version — paired with `manner`, never with the
+    # start. Read the other way, a 2016 commencement is attributed to a 2022 ordinance.
     amended_by: str = ""
     language: str = "en"
     chapter: str = ""
+    # The instrument that brought this version into force, where it was not the Act itself.
+    enacted_by: str = ""
 
     def __post_init__(self) -> None:
-        self.in_force_from = _as_date(self.in_force_from)
-        self.in_force_to = _as_date(self.in_force_to)
-        if self.in_force_to and self.in_force_to < self.in_force_from:
-            raise CorpusError(f"{self.key}: in_force_to precedes in_force_from")
+        # Checked here, at load, because every one of these otherwise surfaces later as a
+        # crash in the middle of answering: an integer number has no .lower(), a null text
+        # cannot be tokenised, and "Section" never matches a parsed "section".
+        if isinstance(self.number, int) and not isinstance(self.number, bool):
+            self.number = str(self.number)
+        for name in ("statute", "unit", "number", "heading", "text"):
+            if not isinstance(getattr(self, name), str):
+                raise CorpusError(f"{name} must be a string, got {getattr(self, name)!r}")
+        for name in ("superseded_by", "manner", "amended_by", "language", "chapter", "enacted_by"):
+            if getattr(self, name) is None:
+                setattr(self, name, "")
+        self.unit = self.unit.strip().lower()
+        if self.unit not in UNITS:
+            raise CorpusError(f"unit must be one of {sorted(UNITS)}, got {self.unit!r}")
+        self.number = normalise_number(self.number)
+        try:
+            self.in_force_from = _as_date(self.in_force_from)
+            self.in_force_to = _as_date(self.in_force_to)
+        except (TypeError, ValueError) as exc:
+            raise CorpusError(f"{self.key}: bad date: {exc}") from exc
+        if self.in_force_from is None:
+            raise CorpusError(f"{self.key}: in_force_from is required")
+        if self.in_force_to and self.in_force_to <= self.in_force_from:
+            raise CorpusError(
+                f"{self.key}: in force {self.in_force_from} to {self.in_force_to} is never in "
+                "force at all"
+            )
 
     @property
     def key(self) -> str:
@@ -109,6 +142,20 @@ class Provision:
 @dataclass
 class Corpus:
     provisions: list[Provision] = field(default_factory=list)
+    # key -> versions oldest first. Rebuilt when the list changes size, so appending to
+    # `provisions` directly still works; without it every lookup scans the whole corpus.
+    _by_key: dict[str, list[Provision]] = field(default_factory=dict, repr=False)
+    _indexed: int = field(default=-1, repr=False)
+
+    def _index(self) -> dict[str, list[Provision]]:
+        if self._indexed != len(self.provisions):
+            by_key: dict[str, list[Provision]] = {}
+            for p in self.provisions:
+                by_key.setdefault(p.key, []).append(p)
+            for versions in by_key.values():
+                versions.sort(key=lambda p: p.in_force_from)
+            self._by_key, self._indexed = by_key, len(self.provisions)
+        return self._by_key
 
     def add(self, provision: Provision) -> Provision:
         self.provisions.append(provision)
@@ -124,10 +171,19 @@ class Corpus:
 
     def versions(self, key: str) -> list[Provision]:
         """Every version of one provision, oldest first."""
-        return sorted(
-            (p for p in self.provisions if p.key == key),
-            key=lambda p: p.in_force_from,
-        )
+        return list(self._index().get(key, ()))
+
+    def resolve(self, key: str) -> str:
+        """The key to look up for a citation, falling back from a subsection to its section.
+
+        Corpora are built per section, and legal writing cites subsections constantly:
+        "section 20(1) PECA" must find section 20, not be refused as unknown. The exact
+        key wins when a corpus does hold subsections separately.
+        """
+        if self.versions(key):
+            return key
+        enclosing = _SUBDIVISION.sub("", key)
+        return enclosing if enclosing != key and self.versions(enclosing) else key
 
     def current(self, key: str) -> Provision | None:
         return next((p for p in self.versions(key) if p.currently_in_force), None)
@@ -146,6 +202,7 @@ class Corpus:
                 "amended_by": p.amended_by,
                 "superseded_by": p.superseded_by,
                 "heading": p.heading,
+                **({"enacted_by": p.enacted_by} if p.enacted_by else {}),
             }
             for p in self.versions(key)
         ]
@@ -158,12 +215,8 @@ class Corpus:
         and the result is not reproducible.
         """
         problems: list[str] = []
-        by_key: dict[str, list[Provision]] = {}
-        for p in self.provisions:
-            by_key.setdefault(p.key, []).append(p)
-
-        for key, versions in by_key.items():
-            ordered = sorted(versions, key=lambda p: p.in_force_from)
+        for key, versions in self._index().items():
+            ordered = versions
             for earlier, later in zip(ordered, ordered[1:], strict=False):
                 if earlier.in_force_to is None:
                     problems.append(
@@ -175,12 +228,14 @@ class Corpus:
                         f"{key}: versions overlap between {later.in_force_from} and "
                         f"{earlier.in_force_to}"
                     )
-                elif earlier.in_force_to < later.in_force_from:
-                    # A gap means the provision was not in force at all for a period,
-                    # which happens but is almost always a data error.
+                elif earlier.in_force_to < later.in_force_from and not later.enacted_by:
+                    # A gap is almost always a data error — a mistyped date. A provision
+                    # that really was repealed and later re-enacted says so: the later
+                    # version names the instrument that brought it back.
                     problems.append(
                         f"{key}: gap in force between {earlier.in_force_to} and "
-                        f"{later.in_force_from}"
+                        f"{later.in_force_from}; if it was re-enacted, give the later "
+                        "version an enacted_by"
                     )
 
             if sum(1 for p in versions if p.currently_in_force) > 1:
