@@ -1,13 +1,9 @@
 """Building and maintaining a temporal corpus without hand-writing JSON.
 
-Two jobs, both of which are where a real corpus goes wrong:
+Two jobs, both of which are where a real corpus goes wrong.
 
-**Splitting an Act into provisions.** Official texts lay each section out as a number, a
-heading and a body — ``20. Offences against dignity of a natural person.—(1) Whoever``.
-The number is the only reliable boundary, and it is also the thing most easily confused
-with a numbered clause or a year inside a body. So a candidate heading is accepted only
-if its number comes *after* the previous one in statute order; anything else stays body
-text and is reported, not silently swallowed or silently split.
+**Splitting an Act into provisions** is `split.split_act`, which accounts for every
+character it does not import; cleaning a source's PDF or HTML first is `sources`.
 
 **Recording amendments.** A substitution is two edits that must agree: the live version
 ends on a date and the new one begins on the same date. Done by hand, one of them gets
@@ -27,114 +23,9 @@ import tempfile
 from pathlib import Path
 
 from .audit import provision_order
-from .citation import normalise_number, parse, statute_aliases
+from .citation import parse, statute_aliases
 from .corpus import Corpus, CorpusError, Provision
-
-_HEADER = re.compile(
-    r"^[ \t]*(?P<number>\d{1,4}(?:-?[A-Z]{1,3})?)\.[ \t]+"
-    r"(?P<heading>[A-Z\[][^\n]{1,240}?)"
-    # The heading ends at ".—", ":—", ".-", a bare em/en dash, or ": ".
-    r"(?:[ \t]*[.:][ \t]*[—–-]+|[ \t]*[—–]|:[ \t])"
-    r"[ \t]*(?P<rest>.*)$",
-    re.M,
-)
-_CHAPTER = re.compile(r"^[ \t]*(CHAPTER|PART)[ \t]+([IVXLC\d]+[A-Z]?)\b[ \t.:—–-]*(.*)$", re.M)
-_OMITTED_LINE = re.compile(
-    r"^[ \t]*(?P<number>\d{1,4}(?:-?[A-Z]{1,3})?)\.[ \t]*"
-    r"\[[ \t]*(?:omitted|repealed)\b[^\]\n]*\]\.?[ \t]*$",
-    re.M | re.I,
-)
-# Schedules follow the last section and are not provisions. Missed, the whole schedule
-# becomes the tail of the last section's text.
-_SCHEDULE = re.compile(
-    r"^[ 	]*(?:THE[ 	]+)?(?:[A-Z]+[ 	]+)?SCHEDULE[ 	]*(?:[-—–:.(].*)?$", re.M
-)
-_DROPPED = re.compile(r"^\[?\s*(omitted|repealed)\b", re.I)
-
-
-def split_act(
-    text: str,
-    *,
-    statute: str,
-    in_force_from: str,
-    unit: str = "section",
-) -> tuple[list[dict], dict]:
-    """Rows for `corpus.build`, and a report of everything that needs a human look."""
-    dt.date.fromisoformat(in_force_from)  # fail before doing any work
-    schedules = ""
-    first_header = _HEADER.search(text)
-    schedule = _SCHEDULE.search(text, first_header.end() if first_header else 0)
-    if schedule:
-        schedules = text[schedule.start() :]
-        text = text[: schedule.start()]
-    # "4. [Omitted by ...]" has no heading dash, so it is not a heading — but it is still
-    # a boundary. Missed, it is swallowed into the end of section 3.
-    candidates = {m.start(): (m, False) for m in _HEADER.finditer(text)}
-    candidates.update({m.start(): (m, True) for m in _OMITTED_LINE.finditer(text)})
-
-    headers: list[tuple[re.Match, bool]] = []
-    rejected = []
-    last = None
-    for _, (match, omitted) in sorted(candidates.items()):
-        order = provision_order(normalise_number(match.group("number")))
-        if last is not None and order <= last:
-            rejected.append(
-                f"'{match.group(0).strip()[:60]}' looks like a heading but its number does "
-                "not follow the previous provision; kept as body text"
-            )
-            continue
-        headers.append((match, omitted))
-        last = order
-
-    chapters = [
-        (m.start(), f"{m.group(1).title()} {m.group(2)} {m.group(3)}".strip())
-        for m in _CHAPTER.finditer(text)
-    ]
-
-    rows: list[dict] = []
-    dropped: list[str] = []
-    for index, (match, omitted) in enumerate(headers):
-        number = normalise_number(match.group("number"))
-        if omitted:
-            dropped.append(f"{unit} {number}: '{match.group(0).strip()[:60]}' — record its dates")
-            continue
-        end = headers[index + 1][0].start() if index + 1 < len(headers) else len(text)
-        body = match.group("rest") + text[match.end() : end]
-        # Chapter headings sit between sections; they belong to the next one, not the body.
-        body = _CHAPTER.split(body)[0] if _CHAPTER.search(body) else body
-        body = re.sub(r"\s+", " ", body).strip()
-        heading = match.group("heading").strip().rstrip(".")
-
-        if _DROPPED.match(heading) or _DROPPED.match(body):
-            dropped.append(f"{unit} {number}: '{heading[:50]}' — record its dates by hand")
-            continue
-
-        chapter = next((name for start, name in reversed(chapters) if start < match.start()), "")
-        rows.append(
-            {
-                "statute": statute,
-                "unit": unit,
-                "number": number,
-                "heading": heading,
-                "text": body,
-                "in_force_from": in_force_from,
-                **({"chapter": chapter} if chapter else {}),
-            }
-        )
-
-    report = {
-        "provisions": len(rows),
-        "empty": [f"{unit} {r['number']}" for r in rows if not r["text"]],
-        "omitted_or_repealed": dropped,
-        "rejected_headings": rejected,
-        "not_imported": (
-            [f"schedule text ({len(schedules)} characters) after the last section"]
-            if schedules.strip()
-            else []
-        ),
-    }
-    return rows, report
-
+from .split import split_act
 
 # ---- amendments --------------------------------------------------------------------------
 
@@ -300,6 +191,42 @@ def write_jsonl(rows: list[dict], path: str | Path) -> None:
 # ---- command line ------------------------------------------------------------------------
 
 
+def _read_source(path: Path, source: str) -> str:
+    from .sources import pakistan_code, pakistani_org, strip_stars
+
+    if source == "pakistani-org":
+        raw = path.read_bytes()
+        # Pages on the site are UTF-8 or ISO-8859-1 depending on their age.
+        try:
+            page = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            page = raw.decode("latin-1")
+        return pakistani_org(page)[0]
+    text = path.read_text(encoding="utf-8-sig")
+    if source == "pakistan-code":
+        return strip_stars(pakistan_code(text).text)
+    return text
+
+
+def summarise(report: dict) -> str:
+    """One paragraph a person reads before trusting an import."""
+    lost = sum(span["characters"] for span in report["not_imported"])
+    lines = [
+        f"imported {report['provisions']} provision(s): {report['imported_characters']:,} of "
+        f"{report['characters']:,} characters; {lost:,} characters in "
+        f"{len(report['not_imported'])} span(s) were not imported (listed in the report)"
+    ]
+    for key, what in (
+        ("omitted_or_repealed", "omitted or repealed, dates to record by hand"),
+        ("missing_from_contents", "listed in the contents but not found in the text"),
+        ("rejected_headings", "heading-like lines kept as body text"),
+        ("too_long", "provision(s) suspiciously long: check for a missed heading"),
+    ):
+        if report.get(key):
+            lines.append(f"  {len(report[key])} {what}")
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     import sys
@@ -313,7 +240,15 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     imp = commands.add_parser("import", help="split an Act's text into provisions")
-    imp.add_argument("text_file", help="the Act as plain text (UTF-8)")
+    imp.add_argument("text_file", help="the Act: plain text (UTF-8), or a source named by --source")
+    imp.add_argument(
+        "--source",
+        default="text",
+        choices=["text", "pakistan-code", "pakistani-org"],
+        help="text: plain text as is; pakistan-code: `pdftotext -layout` output of a "
+        "pakistancode.gov.pk PDF (page footers, footnotes and amendment markers removed); "
+        "pakistani-org: a saved pakistani.org statute page (HTML)",
+    )
     imp.add_argument("--statute", required=True, help="PPC, PECA, CrPC, ... or a full name")
     imp.add_argument("--in-force-from", required=True, help="commencement date, YYYY-MM-DD")
     imp.add_argument("--unit", default="section", choices=["section", "article"])
@@ -355,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "import":
             statute = normalise_statute(args.statute) or args.statute.strip().upper()
-            text = Path(args.text_file).read_text(encoding="utf-8-sig")
+            text = _read_source(Path(args.text_file), args.source)
             new, report = split_act(
                 text, statute=statute, in_force_from=args.in_force_from, unit=args.unit
             )
@@ -370,6 +305,7 @@ def main(argv: list[str] | None = None) -> int:
                 return fail(f"{len(clash)} provision(s) of {statute} already in {output}")
             rows = existing + new
             print(json.dumps(report, indent=2, ensure_ascii=False))
+            print(summarise(report), file=sys.stderr)
         else:
             rows = read_rows(args.corpus)
             output = Path(args.corpus)

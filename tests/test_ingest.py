@@ -94,8 +94,8 @@ class TestSplitting:
         assert report["omitted_or_repealed"][0].startswith("section 4")
 
     def test_chapter_headings_label_sections_and_stay_out_of_bodies(self, rows):
-        assert rows[0]["chapter"] == "Chapter I"
-        assert rows[2]["chapter"] == "Chapter II"
+        assert rows[0]["chapter"] == "Chapter I PRELIMINARY"
+        assert rows[2]["chapter"] == "Chapter II OFFENCES AND PUNISHMENTS"
         assert "CHAPTER" not in rows[1]["text"]
 
     def test_the_result_loads_and_validates(self, rows):
