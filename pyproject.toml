@@ -29,6 +29,9 @@ Issues = "https://github.com/hammasbuilds/pak-law-assistant/issues"
 paklaw-mcp = "paklaw.mcp_server:main"
 paklaw-corpus = "paklaw.ingest:main"
 
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "ruff>=0.8"]
+
 [dependency-groups]
 dev = ["pytest>=8.3", "ruff>=0.8"]
 

@@ -179,7 +179,7 @@ by byte, beside a regression suite that calls it the same way, including as a re
 | Tool | Use it for |
 |---|---|
 | `answer_question` | "what does the law say about X *on this date*": provision text with citations, or one of the four refusals |
-| `check_citations` | **auditing a draft** (a brief, a notice, or a model's own answer). Every citation gets a status for the date: `in_force`, `amended_since`, `not_in_force`, `not_yet_in_force`, `unknown_provision`, `no_act_named`, `statute_not_loaded` or `not_checkable`, plus its character offset |
+| `check_citations` | **auditing a draft** (a brief, a notice, or a model's own answer). Every citation gets a status for the date: `in_force`, `amended_since`, `not_in_force`, `not_yet_in_force`, `unknown_provision`, `no_act_named`, `statute_not_loaded`, `not_checkable` or `before_record` (dated before the corpus starts recording that statute), plus its character offset |
 | `provision_history` | "when did section 20 change?": every version, how each one ended, and the instrument on each side |
 | `compare_versions` | "what did the amendment do?": a word-level diff between the text on two dates |
 | `list_provisions` | a statute's table of contents on a date, in statute order (2 < 10 < 10A), paged |
@@ -303,6 +303,22 @@ paklaw-corpus repeal statutes.jsonl "section 3 PECA" --on 2024-01-01 --by "..."
 paklaw-corpus check statutes.jsonl      # the same validation the server runs at start
 ```
 
+`import` reads plain text by default. For the two public sources, say which one, so page
+footers, footnotes and amendment markers are removed before splitting:
+
+```bash
+pdftotext -layout ppc.pdf ppc.txt
+paklaw-corpus import ppc.txt --source pakistan-code --statute PPC --in-force-from 1860-10-06 -o statutes.jsonl
+paklaw-corpus import ppc.html --source pakistani-org --statute PPC --in-force-from 1860-10-06 -o statutes.jsonl
+```
+
+A corpus file may start with one header line, `{"_corpus": {"as_at": "2025-06-30", ...}}`,
+saying when it was last brought up to date. A provision row with `"start_known": false`
+marks the date as where the corpus's *record* of that statute begins, not a commencement.
+Answers dated after `as_at`, or before a statute's record begins, carry a warning, and
+`check_citations` gives such a citation `before_record` instead of calling it
+`not_yet_in_force`.
+
 The importer's traps are the real ones. A numbered line inside a body (`3. Thirty days:
 …` in the middle of section 20) is not accepted as a new section, because its number
 doesn't follow the previous one; it is kept as body text and listed in the report. An
@@ -333,7 +349,7 @@ The file is **validated before the server accepts a single request**. If version
 overlap, leave a gap, or more than one is live, the server refuses to start and lists
 every problem, because otherwise the answer would depend on which version it happened to
 read first. An unknown field such as a typo'd `sectoin` names the row it is in.
-`paklaw-mcp --check` loads and validates a file, prints what it covers, then exits.
+`paklaw-mcp --check statutes.jsonl` loads and validates a file, prints what it covers, then exits.
 
 Without `PAKLAW_CORPUS`, the server runs on a **three-provision sample** with
 illustrative, unofficial wording, and every result carries a `corpus_warning` saying so.
@@ -349,9 +365,10 @@ than one live version of a provision.
 
 ## Tests
 
-**172 tests: 57 for the library, 47 for the MCP server, 24 for corpus building, and 44
-regressions, one per defect an independent review reproduced. No dependencies, no corpus
-download.** CI runs them on Python 3.10 to 3.13, then runs both demos.
+**206 tests: 57 for the library, 47 for the MCP server, 41 for corpus building and
+source parsing, 17 for record coverage, and 44 regressions, one per defect an independent
+review reproduced. No dependencies, no corpus download.** Run them with
+`pip install -e .[dev]` then `pytest`, or `uv run pytest`. CI runs them on Python 3.10 to 3.13, then runs both demos.
 
 | Covered | |
 |---|---|

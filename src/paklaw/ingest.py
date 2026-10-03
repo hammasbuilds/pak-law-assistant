@@ -125,7 +125,28 @@ _FIELDS = set(Provision.__dataclass_fields__)
 _REQUIRED = {"statute", "unit", "number", "heading", "text", "in_force_from"}
 
 
-def read_rows(path: str | Path) -> list[dict]:
+META_KEY = "_corpus"
+
+
+def read_corpus(path: str | Path) -> tuple[list[dict], dict]:
+    """Provisions, and the corpus's own description if its first entry is one.
+
+    A description is an object with the single key ``_corpus``: when the corpus was last
+    brought up to date (``as_at``), its sources and their terms. It is what lets an
+    answer about a later date say that a later amendment would not be in it.
+    """
+    rows = read_rows(path, keep_meta=True)
+    meta: dict = {}
+    if rows and isinstance(rows[0], dict) and set(rows[0]) == {META_KEY}:
+        meta = rows.pop(0)[META_KEY]
+        if not isinstance(meta, dict):
+            raise CorpusError(f"{path}: {META_KEY} must be an object")
+    if any(isinstance(r, dict) and META_KEY in r for r in rows):
+        raise CorpusError(f"{path}: {META_KEY} may appear only as the first entry")
+    return rows, meta
+
+
+def read_rows(path: str | Path, *, keep_meta: bool = False) -> list[dict]:
     """A JSON array of provisions, or JSON Lines with one provision per line."""
     text = Path(path).read_text(encoding="utf-8-sig")
     if text.lstrip().startswith("["):
@@ -141,11 +162,18 @@ def read_rows(path: str | Path) -> list[dict]:
                 raise CorpusError(f"{path}: line {number} is not JSON: {exc.msg}") from exc
     if not isinstance(rows, list):
         raise CorpusError(f"{path}: expected a JSON array or JSON Lines of provisions")
+    if not keep_meta and rows and isinstance(rows[0], dict) and set(rows[0]) == {META_KEY}:
+        rows = rows[1:]
     return rows
 
 
-def build_checked(rows: list[dict], *, source: str = "corpus") -> Corpus:
+def build_checked(rows: list[dict], *, source: str = "corpus", meta: dict | None = None) -> Corpus:
     """`corpus.build`, with the row at fault named instead of a bare TypeError."""
+    meta = meta or {}
+    try:
+        as_at = dt.date.fromisoformat(meta["as_at"]) if meta.get("as_at") else None
+    except (TypeError, ValueError) as exc:
+        raise CorpusError(f"{source}: {META_KEY}.as_at is not a date: {exc}") from exc
     for index, row in enumerate(rows, 1):
         if not isinstance(row, dict):
             raise CorpusError(f"{source}: provision {index} is not an object")
@@ -155,7 +183,7 @@ def build_checked(rows: list[dict], *, source: str = "corpus") -> Corpus:
         missing = _REQUIRED - set(row)
         if missing:
             raise CorpusError(f"{source}: provision {index} is missing {sorted(missing)}")
-    corpus = Corpus()
+    corpus = Corpus(as_at=as_at, meta=meta)
     for index, row in enumerate(rows, 1):
         try:
             corpus.add(Provision(**row))
@@ -170,7 +198,7 @@ def check(rows: list[dict], *, source: str = "corpus") -> list[str]:
     return build_checked(rows, source=source).validate()
 
 
-def write_jsonl(rows: list[dict], path: str | Path) -> None:
+def write_jsonl(rows: list[dict], path: str | Path, *, meta: dict | None = None) -> None:
     """Atomically: a failed write must not leave half a statute book behind."""
     path = Path(path)
     ordered = sorted(
@@ -180,6 +208,8 @@ def write_jsonl(rows: list[dict], path: str | Path) -> None:
     handle, temporary = tempfile.mkstemp(dir=path.parent or ".", suffix=".tmp")
     try:
         with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as out:
+            if meta:
+                out.write(json.dumps({META_KEY: meta}, ensure_ascii=False) + "\n")
             for row in ordered:
                 out.write(json.dumps(row, ensure_ascii=False) + "\n")
         os.replace(temporary, path)
@@ -274,15 +304,20 @@ def main(argv: list[str] | None = None) -> int:
     chk.add_argument("corpus")
 
     args = parser.parse_args(argv)
+    # Windows consoles default to the ANSI code page; headings carry em dashes.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
     def fail(message: str) -> int:
         print(f"paklaw-corpus: {message}", file=sys.stderr)
         return 2
 
     try:
+        meta: dict = {}
         if args.command == "check":
-            rows = read_rows(args.corpus)
-            problems = check(rows, source=args.corpus)
+            rows, meta = read_corpus(args.corpus)
+            problems = build_checked(rows, source=args.corpus, meta=meta).validate()
             for problem in problems:
                 print(problem)
             print(f"{len(rows)} versions, {len(problems)} problem(s)")
@@ -295,9 +330,18 @@ def main(argv: list[str] | None = None) -> int:
                 text, statute=statute, in_force_from=args.in_force_from, unit=args.unit
             )
             if not new:
-                return fail("no provisions found; is the text laid out as '1. Heading.— ...'?")
+                hint = (
+                    " If this is pdftotext output of a pakistancode.gov.pk PDF, add "
+                    "--source pakistan-code; for a saved pakistani.org page, "
+                    "--source pakistani-org."
+                    if args.source == "text"
+                    else ""
+                )
+                return fail(
+                    "no provisions found; is the text laid out as '1. Heading.- ...'?" + hint
+                )
             output = Path(args.output)
-            existing = read_rows(output) if output.exists() else []
+            existing, meta = read_corpus(output) if output.exists() else ([], {})
             clash = {(r["statute"], r["unit"], r["number"]) for r in existing} & {
                 (r["statute"], r["unit"], r["number"]) for r in new
             }
@@ -307,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report, indent=2, ensure_ascii=False))
             print(summarise(report), file=sys.stderr)
         else:
-            rows = read_rows(args.corpus)
+            rows, meta = read_corpus(args.corpus)
             output = Path(args.corpus)
             common = {"on": args.on, "by": args.by}
             if args.command == "repeal":
@@ -323,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
         if problems:
             # Nothing is written: a corpus the server would refuse is not saved.
             return fail("refusing to write an invalid corpus:\n  " + "\n  ".join(problems))
-        write_jsonl(rows, output)
+        write_jsonl(rows, output, meta=meta)
         print(f"wrote {len(rows)} versions to {output}", file=sys.stderr)
         return 0
     except (OSError, ValueError, CorpusError) as exc:

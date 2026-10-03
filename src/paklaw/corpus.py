@@ -67,6 +67,15 @@ class Provision:
     chapter: str = ""
     # The instrument that brought this version into force, where it was not the Act itself.
     enacted_by: str = ""
+    # False when `in_force_from` is where the corpus's record of this statute begins,
+    # not when this text came into force: the text was in force on that date and may
+    # have been for years, but nothing earlier is held.
+    start_known: bool = True
+    # What a reader must know about this version that its dates do not say: a court
+    # order striking part of it down, or that its text is not held at all.
+    note: str = ""
+    # Where this version's text was taken from.
+    source: str = ""
 
     def __post_init__(self) -> None:
         # Checked here, at load, because every one of these otherwise surfaces later as a
@@ -77,9 +86,20 @@ class Provision:
         for name in ("statute", "unit", "number", "heading", "text"):
             if not isinstance(getattr(self, name), str):
                 raise CorpusError(f"{name} must be a string, got {getattr(self, name)!r}")
-        for name in ("superseded_by", "manner", "amended_by", "language", "chapter", "enacted_by"):
+        for name in (
+            "superseded_by",
+            "manner",
+            "amended_by",
+            "language",
+            "chapter",
+            "enacted_by",
+            "note",
+            "source",
+        ):
             if getattr(self, name) is None:
                 setattr(self, name, "")
+        if not isinstance(self.start_known, bool):
+            raise CorpusError(f"start_known must be true or false, got {self.start_known!r}")
         self.unit = self.unit.strip().lower()
         if self.unit not in UNITS:
             raise CorpusError(f"unit must be one of {sorted(UNITS)}, got {self.unit!r}")
@@ -123,10 +143,20 @@ class Provision:
             raw=self.key,
         )
 
+    @property
+    def text_held(self) -> bool:
+        return bool(self.text.strip())
+
     def status_note(self, as_of: dt.date) -> str:
         """What a reader must be told about this text before relying on it."""
         if self.in_force_on(as_of):
             return ""
+        if as_of < self.in_force_from and not self.start_known:
+            return (
+                f"not recorded before {self.in_force_from.isoformat()}: this corpus holds "
+                f"{self.statute} only from that date, so the text in force on "
+                f"{as_of.isoformat()} is unknown here"
+            )
         if as_of < self.in_force_from:
             return (
                 f"not yet in force on {as_of.isoformat()} "
@@ -142,6 +172,11 @@ class Provision:
 @dataclass
 class Corpus:
     provisions: list[Provision] = field(default_factory=list)
+    # The date the corpus was last brought up to date: an amendment after it is not in
+    # it, so an answer about a later date must say so.
+    as_at: dt.date | None = None
+    # Free-form provenance (sources, licence), carried through to corpus_info.
+    meta: dict = field(default_factory=dict)
     # key -> versions oldest first. Rebuilt when the list changes size, so appending to
     # `provisions` directly still works; without it every lookup scans the whole corpus.
     _by_key: dict[str, list[Provision]] = field(default_factory=dict, repr=False)
@@ -203,9 +238,40 @@ class Corpus:
                 "superseded_by": p.superseded_by,
                 "heading": p.heading,
                 **({"enacted_by": p.enacted_by} if p.enacted_by else {}),
+                **(
+                    {"from_note": "the start of this corpus's record, not a commencement"}
+                    if not p.start_known
+                    else {}
+                ),
+                **({"note": p.note} if p.note else {}),
             }
             for p in self.versions(key)
         ]
+
+    def recorded_from(self, statute: str) -> dt.date | None:
+        """The first date from which the corpus holds `statute`, where it says so."""
+        floors = [
+            p.in_force_from for p in self.provisions if p.statute == statute and not p.start_known
+        ]
+        return max(floors) if floors else None
+
+    def coverage_warnings(self, date: dt.date, statutes: Sequence[str] | None = None) -> list[str]:
+        """What the corpus cannot vouch for on `date`: before a statute's record begins, or
+        after the corpus was last brought up to date."""
+        warnings = []
+        for statute in sorted(set(statutes) if statutes else {p.statute for p in self}):
+            start = self.recorded_from(statute)
+            if start and date < start:
+                warnings.append(
+                    f"{statute} is recorded here only from {start.isoformat()}; provisions of "
+                    f"{statute} in force on {date.isoformat()} are not all held"
+                )
+        if self.as_at and date > self.as_at:
+            warnings.append(
+                f"the corpus records amendments up to {self.as_at.isoformat()}; a change after "
+                f"that date would not be reflected for {date.isoformat()}"
+            )
+        return warnings
 
     def validate(self) -> list[str]:
         """Structural problems that would produce wrong answers silently.
@@ -240,6 +306,20 @@ class Corpus:
 
             if sum(1 for p in versions if p.currently_in_force) > 1:
                 problems.append(f"{key}: more than one version is currently in force")
+            if any(not p.start_known for p in versions[1:]):
+                problems.append(f"{key}: only the first version can begin where the record does")
+
+        floors: dict[str, set] = {}
+        for p in self.provisions:
+            if not p.start_known:
+                floors.setdefault(p.statute, set()).add(p.in_force_from)
+        for statute, dates in sorted(floors.items()):
+            if len(dates) > 1:
+                listed = ", ".join(sorted(d.isoformat() for d in dates))
+                problems.append(
+                    f"{statute}: the record begins on {len(dates)} different dates ({listed}); "
+                    "a statute's record has one beginning"
+                )
 
         return problems
 
@@ -247,8 +327,8 @@ class Corpus:
         return iter(self.provisions)
 
 
-def build(rows: Sequence[dict]) -> Corpus:
-    corpus = Corpus()
+def build(rows: Sequence[dict], *, as_at: str | dt.date | None = None) -> Corpus:
+    corpus = Corpus(as_at=_as_date(as_at))
     for row in rows:
         corpus.add(Provision(**row))
     return corpus

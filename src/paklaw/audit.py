@@ -28,6 +28,8 @@ UNKNOWN = "unknown_provision"  # statute loaded, provision absent
 NO_ACT = "no_act_named"  # "section 9" — of what?
 NOT_LOADED = "statute_not_loaded"  # the corpus cannot say anything either way
 NOT_CHECKED = "not_checkable"  # case law and SROs: not what this corpus holds
+# Dated before the corpus's record of the statute begins: it may well have been in force.
+BEFORE_RECORD = "before_record"
 IN_FORCE = "in_force"
 # Good law on the date, but amended since. The citation is right; the words quoted from
 # it may be the later ones. A draft about 2019 conduct quoting "up to five years" cites a
@@ -36,7 +38,7 @@ AMENDED_SINCE = "amended_since"
 
 PROBLEMS = (REPEALED, NOT_YET, UNKNOWN, NO_ACT)
 REVIEW = (AMENDED_SINCE,)
-UNVERIFIED = (NOT_LOADED, NOT_CHECKED)
+UNVERIFIED = (NOT_LOADED, NOT_CHECKED, BEFORE_RECORD)
 
 
 def _date(value: str | dt.date) -> dt.date:
@@ -125,7 +127,10 @@ def _check_one(corpus: Corpus, c: Citation, date: dt.date, loaded: set[str]) -> 
     live = corpus.version_on(key, date)
     if live is None:
         nearest = _nearest(versions, date)
-        status = NOT_YET if date < versions[0].in_force_from else REPEALED
+        if date < versions[0].in_force_from:
+            status = NOT_YET if versions[0].start_known else BEFORE_RECORD
+        else:
+            status = REPEALED
         entry |= {"status": status, "note": nearest.status_note(date)}
         current = corpus.current(key)
         if current is not None and status == REPEALED:

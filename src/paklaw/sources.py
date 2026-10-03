@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import html
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 # "Page 40 of 179", and the consolidation stamp "Dated: 30-11-2025", "RGN Date:
@@ -259,6 +260,118 @@ def _plain(fragment: str) -> str:
     text = text.replace("\xa0", " ")
     text = "\n".join(line.strip() for line in text.splitlines())
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+_SENTINEL = re.compile(r"\x01(\d+)\x02")
+_TOKEN = re.compile(r"\x01(\d+)\x02[ \t]*\[|\][ \t]*\x01(\d+)\x02|\x01(\d+)\x02")
+_INSTRUMENT = re.compile(r"\(([IVXLCDM]+)\s+of\s+(\d{4})\)")
+_NOTE_HEAD = re.compile(
+    r"\b(?P<kind>substituted|inserted|omitted|added|re-?numbered|numbered)\s+by\s+(?P<by>.*)$",
+    re.I | re.S,
+)
+
+
+@dataclass
+class Span:
+    """Words an amendment put in the text, with the note that says which one."""
+
+    note: int
+    children: list  # of str | Span
+
+
+@dataclass
+class Note:
+    number: int
+    kind: str  # substituted | inserted | omitted | added | numbered
+    instrument: str  # "XLIV of 2016", or "" where the note names none by number
+    year: int | None
+    old: list  # the words before the amendment, as str | Span
+    text: str  # the note as printed
+
+
+def _marked(fragment: str) -> str:
+    """Plain text with each inline amendment marker kept as a sentinel."""
+    return _plain(_INLINE_MARK.sub(lambda m: f"\x01{m.group(1)}\x02", fragment))
+
+
+def _tree(text: str) -> list:
+    """Parse sentinel-marked text into strings and nested `Span`s."""
+    root: list = []
+    stack: list[tuple[int | None, list]] = [(None, root)]
+    position = 0
+    for match in _TOKEN.finditer(text):
+        stack[-1][1].append(text[position : match.start()])
+        position = match.end()
+        if match.group(1):  # opens a span
+            span = Span(int(match.group(1)), [])
+            stack[-1][1].append(span)
+            stack.append((span.note, span.children))
+        elif match.group(2):  # closes one: the most recent span with that note
+            number = int(match.group(2))
+            if any(n == number for n, _ in stack[1:]):
+                while stack[-1][0] != number:
+                    stack.pop()
+                stack.pop()
+            # A close with no open is a stray; its bracket is dropped with it.
+    stack[-1][1].append(text[position:])
+    return root
+
+
+def _note(number: int, fragment: str) -> Note:
+    printed = _SPACE.sub(" ", _SENTINEL.sub("", _plain(fragment))).strip()
+    marked = _marked(fragment)
+    head = _NOTE_HEAD.search(marked)
+    kind = head.group("kind").lower().replace("-", "") if head else "other"
+    by = head.group("by") if head else marked
+    instrument = _INSTRUMENT.search(re.split(r"\s+for\b", by.split(":")[0])[0])
+    old = ""
+    if kind in ("substituted", "omitted") and ":" in by:
+        old = by.split(":", 1)[1].lstrip(" :\n")
+        quoted = re.fullmatch(r'\s*"(.*)"\s*\.?\s*', old, re.S)
+        old = quoted.group(1) if quoted else old
+    return Note(
+        number=number,
+        kind="added" if kind == "added" else kind,
+        instrument=f"{instrument.group(1)} of {instrument.group(2)}" if instrument else "",
+        year=int(instrument.group(2)) if instrument else None,
+        old=_tree(old),
+        text=printed,
+    )
+
+
+_SPACE = re.compile(r"[ \t]+")
+
+
+def pakistani_org_history(page: str) -> tuple[list, dict[int, Note]]:
+    """The body of a pakistani.org statute page as a tree of amended spans, and its notes.
+
+    Each note says which instrument made the change and, for a substitution or an
+    omission, what the words were before; `text_on` turns the tree back into the text
+    as it stood on a date.
+    """
+    notes = {int(n): _note(int(n), body) for n, body in _NOTE.findall(page)}
+    notes_start = page.find("<h3>Notes</h3>")
+    body = page[:notes_start] if notes_start > 0 else page
+    return _tree(_marked(body)), notes
+
+
+def text_on(tree: list, notes: dict[int, Note], made: Callable[[Note], bool]) -> str:
+    """The text with every amendment for which `made(note)` is false undone."""
+    out: list[str] = []
+
+    def walk(nodes: list) -> None:
+        for node in nodes:
+            if isinstance(node, str):
+                out.append(node)
+                continue
+            note = notes.get(node.note)
+            if note is None or made(note):
+                walk(node.children)
+            else:
+                walk(note.old)
+
+    walk(tree)
+    return _SENTINEL.sub("", "".join(out))
 
 
 def pakistani_org(page: str) -> tuple[str, dict[int, str]]:

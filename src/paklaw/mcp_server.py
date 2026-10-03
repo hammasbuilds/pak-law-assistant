@@ -54,7 +54,7 @@ from .answer import Answer, LawAssistant
 from .audit import changes_between, check_citations, compare_versions, contents
 from .citation import CANONICAL_STATUTES, normalise_statute, parse, statute_aliases
 from .corpus import Corpus, CorpusError
-from .ingest import build_checked, read_rows
+from .ingest import build_checked, read_corpus
 
 # Newest first. A client asking for one of these gets it; anything else gets the newest.
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -154,7 +154,8 @@ TOOLS: list[dict[str, Any]] = [
         "Audit a draft — a brief, a notice, an answer a model wrote — for citations that were "
         "not good law on a date. Each citation gets a status: in_force, not_in_force "
         "(repealed or substituted), not_yet_in_force, unknown_provision, no_act_named, "
-        "statute_not_loaded, or not_checkable (case law, SROs). The verdict is "
+        "statute_not_loaded, not_checkable (case law, SROs) or before_record (dated before the "
+        "corpus starts recording that statute). The verdict is "
         "'all_in_force' only when every citation was checked and passed.",
         {
             "text": {"type": "string", "description": "The draft, up to 200,000 characters."},
@@ -277,7 +278,8 @@ class ProtocolError(Exception):
 def load_corpus(path: str | None) -> tuple[Corpus, str]:
     """The corpus and where it came from. Refuses one that fails validation."""
     if path:
-        corpus = build_checked(read_rows(path), source=str(path))
+        rows, meta = read_corpus(path)
+        corpus = build_checked(rows, source=str(path), meta=meta)
         source = str(path)
     else:
         sample = resources.files("paklaw").joinpath("sample_corpus.json")
@@ -438,6 +440,8 @@ class LawServer:
         }
         if statute and statute not in self.loaded:
             result["warnings"].append(f"{statute} is not in this corpus")
+        cited = sorted({p.statute for p in answer.passages}) or ([statute] if statute else None)
+        result["warnings"].extend(self.corpus.coverage_warnings(as_of, cited))
         return self._with_corpus_note(result)
 
     def check_citations(self, arguments: dict) -> dict:
@@ -544,6 +548,13 @@ class LawServer:
                 "latest_change": max(
                     max(p.in_force_from, p.in_force_to or p.in_force_from) for p in provisions
                 ).isoformat(),
+                "as_at": self.corpus.as_at.isoformat() if self.corpus.as_at else None,
+                "recorded_from": {
+                    s: d.isoformat()
+                    for s in sorted(by_statute)
+                    if (d := self.corpus.recorded_from(s))
+                },
+                **({"meta": self.corpus.meta} if self.corpus.meta else {}),
             }
         )
 
@@ -687,12 +698,20 @@ def main(argv: list[str] | None = None) -> int:
         "three-provision sample). Build one with paklaw-corpus.",
     )
     parser.add_argument(
+        "corpus_file",
+        nargs="?",
+        metavar="CORPUS",
+        help="the corpus file, as an alternative to --corpus",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="load and validate the corpus, print what it covers, and exit",
     )
     parser.add_argument("--version", action="version", version=f"paklaw-mcp {__version__}")
     args = parser.parse_args(argv)
+    if args.corpus_file:
+        args.corpus = args.corpus_file
     # Windows defaults stderr to the ANSI code page, and an em dash in a diagnostic
     # reaches the client's log as a stray byte.
     if hasattr(sys.stderr, "reconfigure"):
