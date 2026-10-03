@@ -120,7 +120,7 @@ def _heading(
 
     `rest` is the rest of the header line, `tail` the text from the same point on (a
     heading can wrap), and `following` the next non-empty line, for the layout where the
-    number stands alone. A length of -1 means the heading was the whole of `following`.
+    number stands alone.
     """
     if toc_heading is not None:
         words = re.findall(r"\w+", toc_heading.translate(_QUOTES))
@@ -134,16 +134,7 @@ def _heading(
                 end = _AFTER_HEADING.match(tail, found.end())
                 return toc_heading.strip().rstrip("."), end.end(), 3.0
     if not rest.strip():
-        line = following.strip()
-        if (
-            line
-            and len(line) <= HEADING_WINDOW
-            and not _CANDIDATE.match(following)
-            and not _CHAPTER.match(following)
-        ):
-            heading = re.sub(r"[ \t]*[.:]?[ \t]*(?:[—–]+|-{1,2}|_+)?$", "", line)
-            return heading, -1, 2.0 if line.endswith((":", ".", "—", "-", "_")) else 1.0
-        return "", 0, 0.5
+        return _heading_below(tail)
     window = rest[:HEADING_WINDOW]
     strong = _STRONG_END.search(window)
     if strong and strong.start() > 0:
@@ -152,6 +143,44 @@ def _heading(
     if weak and weak.start() > 0 and (rest[:1].isupper() or rest[:1] in "\"'“‘"):
         return rest[: weak.start()].strip().rstrip("."), weak.end(), 1.0
     return rest.strip().rstrip("."), len(rest), 0.5
+
+
+def _heading_below(tail: str) -> tuple[str, int, float]:
+    """The heading of a provision whose number stands alone on its line.
+
+    pakistani.org prints "457." and then the heading, which can wrap over two lines
+    before its colon ("Lurking house-trespass ... offence / punishable with
+    imprisonment:"). Up to three lines are joined until one ends a heading.
+    """
+    lines: list[str] = []
+    position = 0
+    for match in re.finditer(r"[^\n]*(?:\n|$)", tail):
+        if not match.group(0):
+            break
+        line = match.group(0).strip()
+        position = match.end()
+        if not line:
+            if lines:
+                break
+            continue
+        if _CANDIDATE.match(line) or _CHAPTER.match(line):
+            break
+        lines.append(line)
+        joined = " ".join(lines)
+        if len(joined) > HEADING_WINDOW:
+            break
+        # A wrapped heading ends in a colon or dash; a full stop ends only a one-line one,
+        # or the first sentence of the body would be read into the heading.
+        if joined.endswith((":", "—", "-", "_")) or (len(lines) == 1 and joined.endswith(".")):
+            heading = re.sub(r"[ \t]*[.:]?[ \t]*(?:[—–]+|-{1,2}|_+)?$", "", joined)
+            return heading, position, 2.0
+        if len(lines) == 3:
+            break
+    if lines and len(lines[0]) <= HEADING_WINDOW:
+        # No line ended like a heading: take the first line alone, and say it is weak.
+        first = re.search(r"[^\n]*\S[^\n]*(?:\n|$)", tail)
+        return lines[0], first.end() if first else 0, 1.0
+    return "", 0, 0.5
 
 
 def _contents(text: str) -> tuple[dict[str, str], list[str], int, int]:
@@ -294,17 +323,31 @@ def _trailing_heading(body: str) -> tuple[str, str]:
     return body, ""
 
 
-def split_act(
-    text: str,
-    *,
-    statute: str,
-    in_force_from: str,
-    unit: str = "section",
-    too_long: int = TOO_LONG,
-) -> tuple[list[dict], dict]:
-    """Rows for `corpus.build`, and a report of everything that needs a human look."""
-    dt.date.fromisoformat(in_force_from)  # fail before doing any work
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
+@dataclass
+class _Layout:
+    toc: dict[str, str]
+    toc_order: list[str]
+    toc_start: int
+    toc_end: int
+    candidates: list[_Candidate]
+    chain: list[_Candidate]
+    unlisted: list[str]
+
+
+def provision_spans(text: str) -> list[tuple[str, int, int]]:
+    """(number, start, end) of each provision found in `text`, header included.
+
+    For build scripts that need to know which provision an offset falls in, such as
+    the provision an amendment marker belongs to.
+    """
+    chain = _layout(text).chain
+    return [
+        (c.number, c.start, chain[i + 1].start if i + 1 < len(chain) else len(text))
+        for i, c in enumerate(chain)
+    ]
+
+
+def _layout(text: str) -> _Layout:
     toc, toc_order, toc_start, toc_end = _contents(text)
     toc_rank = {number: i for i, number in enumerate(toc_order)}
 
@@ -323,7 +366,7 @@ def split_act(
     for match in _CANDIDATE.finditer(text, toc_end):
         raw_number = _number(match.group("number"))
         rest = match.group("rest")
-        following, after = _next_line(text, match.end())
+        following, _ = _next_line(text, match.end())
         # "(2E) Removal", "26A, Punishment" and "7, 8112. Order" (two footnote numbers
         # glued to section 112) are misprints a source really has; they are accepted only
         # where the contents confirm the heading.
@@ -348,7 +391,7 @@ def split_act(
             continue
         tail = text[match.start("rest") : match.start("rest") + 2 * HEADING_WINDOW]
         heading, consumed, weight = _heading(rest, following, tail, toc.get(number))
-        body_start = after if consumed == -1 else match.start("rest") + consumed
+        body_start = match.start("rest") + consumed
         if toc and not confirmed:
             if number in toc:
                 weight = min(weight, 0.5)
@@ -361,6 +404,28 @@ def split_act(
         candidates.append(_Candidate(match.start(), body_start, number, heading, weight, order))
 
     chain = [candidates[i] for i in _heaviest_rising_chain(candidates)]
+    return _Layout(toc, toc_order, toc_start, toc_end, candidates, chain, unlisted)
+
+
+def split_act(
+    text: str,
+    *,
+    statute: str,
+    in_force_from: str,
+    unit: str = "section",
+    too_long: int = TOO_LONG,
+) -> tuple[list[dict], dict]:
+    """Rows for `corpus.build`, and a report of everything that needs a human look."""
+    dt.date.fromisoformat(in_force_from)  # fail before doing any work
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    layout = _layout(text)
+    toc, toc_order, toc_start, toc_end = (
+        layout.toc,
+        layout.toc_order,
+        layout.toc_start,
+        layout.toc_end,
+    )
+    candidates, chain, unlisted = layout.candidates, layout.chain, layout.unlisted
     accepted = {id(c) for c in chain}
     rejected = [
         f"'{text[c.start : c.start + 60].strip()}' looks like a heading but its number does "
