@@ -127,6 +127,10 @@ _REQUIRED = {"statute", "unit", "number", "heading", "text", "in_force_from"}
 
 META_KEY = "_corpus"
 
+# Instruments numbered in articles. Stored as sections, "Article 6" finds nothing and
+# every citation to them is reported as unknown.
+ARTICLE_STATUTES = {"CONST": "article", "QSO": "article"}
+
 
 def read_corpus(path: str | Path) -> tuple[list[dict], dict]:
     """Provisions, and the corpus's own description if its first entry is one.
@@ -183,6 +187,12 @@ def build_checked(rows: list[dict], *, source: str = "corpus", meta: dict | None
         missing = _REQUIRED - set(row)
         if missing:
             raise CorpusError(f"{source}: provision {index} is missing {sorted(missing)}")
+        if ARTICLE_STATUTES.get(row["statute"]) == "article" and row["unit"] == "section":
+            raise CorpusError(
+                f"{source}: provision {index} is {row['statute']} section {row['number']}, but "
+                f"{row['statute']} is numbered in articles, so citations to it would never be "
+                'found; set "unit": "article" (paklaw-corpus import now does this itself)'
+            )
     corpus = Corpus(as_at=as_at, meta=meta)
     for index, row in enumerate(rows, 1):
         try:
@@ -281,7 +291,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     imp.add_argument("--statute", required=True, help="PPC, PECA, CrPC, ... or a full name")
     imp.add_argument("--in-force-from", required=True, help="commencement date, YYYY-MM-DD")
-    imp.add_argument("--unit", default="section", choices=["section", "article"])
+    imp.add_argument(
+        "--unit",
+        choices=["section", "article"],
+        help="default: article for the Constitution and the Qanun-e-Shahadat Order, "
+        "section for everything else",
+    )
     imp.add_argument("-o", "--output", required=True, help="corpus file; appended if it exists")
 
     for name, help_text in (
@@ -325,9 +340,10 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "import":
             statute = normalise_statute(args.statute) or args.statute.strip().upper()
+            unit = args.unit or ARTICLE_STATUTES.get(statute, "section")
             text = _read_source(Path(args.text_file), args.source)
             new, report = split_act(
-                text, statute=statute, in_force_from=args.in_force_from, unit=args.unit
+                text, statute=statute, in_force_from=args.in_force_from, unit=unit
             )
             if not new:
                 hint = (

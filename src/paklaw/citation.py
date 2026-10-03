@@ -44,19 +44,30 @@ STATUTES: dict[str, str] = {
     "ppc": "PPC",
     "p.p.c.": "PPC",
     "pakistan penal code": "PPC",
+    "penal code": "PPC",
+    "tazirat-e-pakistan": "PPC",
+    "tazirat e pakistan": "PPC",
+    "تعزیرات پاکستان": "PPC",
     "crpc": "CrPC",
     "cr.p.c.": "CrPC",
     "code of criminal procedure": "CrPC",
+    "criminal procedure code": "CrPC",
+    "ضابطہ فوجداری": "CrPC",
     "cpc": "CPC",
     "c.p.c.": "CPC",
     "code of civil procedure": "CPC",
+    "civil procedure code": "CPC",
+    "ضابطہ دیوانی": "CPC",
     "qso": "QSO",
     "qanun-e-shahadat": "QSO",
     "qanun e shahadat": "QSO",
     "qanun-e-shahadat order": "QSO",
+    "قانون شہادت": "QSO",
     "constitution": "CONST",
     "constitution of pakistan": "CONST",
     "constitution of the islamic republic of pakistan": "CONST",
+    "آئین پاکستان": "CONST",
+    "آئین": "CONST",
     "companies act": "COMPANIES",
     "income tax ordinance": "ITO",
     "sales tax act": "STA",
@@ -91,13 +102,18 @@ _MEMBER = re.compile(_NUMBER, re.I)
 _NOT_AFTER_LETTER = r"(?<![A-Za-z])"
 
 
+# Urdu text writes numbers in Extended Arabic-Indic (۳۰۲) or Arabic-Indic (٣٠٢) digits;
+# "دفعہ ۳۰۲" and "section 302" are one provision.
+_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+
+
 def normalise_number(number: str) -> str:
     """One spelling per provision: '489-f' -> '489F', '20(1)(A)' -> '20(1)(a)'.
 
     The base is upper-cased and de-hyphenated because both forms appear for the same
     section; a clause letter stays lower-case because that is how it is cited.
     """
-    number = str(number).strip()
+    number = str(number).strip().translate(_DIGITS)
     match = re.match(r"(\d+)-?([A-Za-z]*)(.*)$", number)
     if not match:
         return number.upper()
@@ -122,14 +138,14 @@ def _patterns(extra: tuple[str, ...] = ()) -> tuple[re.Pattern, re.Pattern, re.P
     statute = r"(?:\s*,?\s*(?:of\s+the\s+|of\s+)?(?P<statute>" + names + r")(?![A-Za-z]))?"
     section = re.compile(
         _NOT_AFTER_LETTER
-        + r"(?:sections?|secs?\.?|ss?\.|§§?|u/ss?\.?)\s*(?P<numbers>"
+        + r"(?:sections?|secs?\.?|ss?\.|§§?|u/ss?\.?|daf(?:a|ah|fa)|دفعہ|دفعات)\s*(?P<numbers>"
         + _LIST
         + r")"
         + statute,
         re.I,
     )
     article = re.compile(
-        _NOT_AFTER_LETTER + r"(?:articles?|arts?\.)\s*(?P<numbers>" + _LIST + r")" + statute,
+        _NOT_AFTER_LETTER + r"(?:articles?|arts?\.|آرٹیکل)\s*(?P<numbers>" + _LIST + r")" + statute,
         re.I,
     )
     bare_names = sorted(

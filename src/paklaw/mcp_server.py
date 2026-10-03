@@ -57,7 +57,9 @@ from .corpus import Corpus, CorpusError
 from .ingest import build_checked, read_corpus
 
 # Newest first. A client asking for one of these gets it; anything else gets the newest.
-PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
+# structuredContent arrived in 2025-06-18; older clients get the text block only.
+_STRUCTURED = {"2025-11-25", "2025-06-18"}
 
 SERVER_NAME = "pak-law-assistant"
 CORPUS_ENV = "PAKLAW_CORPUS"
@@ -135,7 +137,11 @@ TOOLS: list[dict[str, Any]] = [
         "matched, the match was too weak, the cited provision was not in force on that "
         "date (its history is returned), or it is not in the corpus.",
         {
-            "question": {"type": "string", "description": "The question, in English."},
+            "question": {
+                "type": "string",
+                "description": "The question, in English. A citation in it ('section 20 "
+                "PECA', 'dafa 302 PPC', 'دفعہ 302 تعزیرات پاکستان') makes it a lookup.",
+            },
             "as_of": _date_property(
                 "The date the question is about. Law changes; the answer for 2020 and for "
                 "today can differ."
@@ -152,11 +158,14 @@ TOOLS: list[dict[str, Any]] = [
         "check_citations",
         "Check every citation in a draft",
         "Audit a draft — a brief, a notice, an answer a model wrote — for citations that were "
-        "not good law on a date. Each citation gets a status: in_force, not_in_force "
-        "(repealed or substituted), not_yet_in_force, unknown_provision, no_act_named, "
+        "not good law on a date. Each citation gets a status: in_force, amended_since (good "
+        "law on the date but amended later, so check the draft quotes the older words), "
+        "not_in_force (repealed or substituted), not_yet_in_force, unknown_provision, "
+        "no_act_named, "
         "statute_not_loaded, not_checkable (case law, SROs) or before_record (dated before the "
-        "corpus starts recording that statute). The verdict is "
-        "'all_in_force' only when every citation was checked and passed.",
+        "corpus starts recording that statute). The verdict is problems, review, "
+        "unverified, or 'all_in_force' only when every citation was checked and passed. "
+        f"Pages of {CITATION_LIMIT} citations; pass offset to continue.",
         {
             "text": {"type": "string", "description": "The draft, up to 200,000 characters."},
             "as_of": _date_property("The date the draft speaks about."),
@@ -302,17 +311,19 @@ def load_corpus(path: str | None) -> tuple[Corpus, str]:
 
 def _string(arguments: dict, name: str, *, required: bool = False) -> str | None:
     value = arguments.get(name)
-    if value is None or value == "":
-        if required:
-            raise ToolError(f"'{name}' is required")
-        return None
-    if not isinstance(value, str):
+    if value is not None and not isinstance(value, str):
         raise ToolError(f"'{name}' must be a string, got {type(value).__name__}")
-    if len(value) > TEXT_LIMIT:
+    if value is not None and len(value) > TEXT_LIMIT:
         raise ToolError(
             f"'{name}' is {len(value):,} characters; the limit is {TEXT_LIMIT:,}. Send it in parts."
         )
-    return value.strip()
+    value = (value or "").strip()
+    if not value:
+        # Whitespace is as empty as "": answering it would be a refusal about nothing.
+        if required:
+            raise ToolError(f"'{name}' is required")
+        return None
+    return value
 
 
 def _offset(arguments: dict) -> int:
@@ -354,6 +365,14 @@ def _finite(value: float) -> float | None:
     # A cited provision is resolved, not scored; the library marks that with infinity,
     # which JSON cannot carry.
     return None if math.isinf(value) else value
+
+
+def _swapped(result: dict, first: str, second: str) -> None:
+    # The library orders the dates itself; say so, or a model that sent them reversed
+    # reads "before" in the result as the date it called "after".
+    result.setdefault("warnings", []).append(
+        f"{first} was later than {second}; the dates were taken in date order"
+    )
 
 
 def _first_citation(text: str, statute: str | None, aliases: dict[str, str]) -> str:
@@ -481,9 +500,10 @@ class LawServer:
             self.aliases,
         )
         before, after = _date(arguments, "before"), _date(arguments, "after")
-        return self._with_corpus_note(
-            _refusal(compare_versions(self.corpus, key, before=before, after=after))
-        )
+        result = _refusal(compare_versions(self.corpus, key, before=before, after=after))
+        if before > after:
+            _swapped(result, "before", "after")
+        return self._with_corpus_note(result)
 
     def list_provisions(self, arguments: dict) -> dict:
         statute = self._statute(arguments, "statute", required=True)
@@ -498,6 +518,8 @@ class LawServer:
         start, end = _date(arguments, "start"), _date(arguments, "end")
         statute = self._statute(arguments, "statute")
         result = changes_between(self.corpus, start, end, statute=statute)
+        if start > end:
+            _swapped(result, "start", "end")
         return self._with_corpus_note(_page(result, "events", _offset(arguments), EVENT_LIMIT))
 
     def parse_citations(self, arguments: dict) -> dict:
@@ -606,7 +628,7 @@ class LawServer:
             "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
             "isError": False,
         }
-        if self.protocol_version == "2025-06-18":
+        if self.protocol_version in _STRUCTURED:
             payload["structuredContent"] = result
         return payload
 
