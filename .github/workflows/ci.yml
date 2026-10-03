@@ -26,4 +26,5 @@ jobs:
       - run: python demo_mcp.py
       # the installed entry points, as an MCP client would start them
       - run: paklaw-mcp --check
+      - run: pak-law-assistant --check
       - run: paklaw-corpus --help
