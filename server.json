@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.hammasbuilds/pak-law-assistant",
+  "title": "Pakistan law",
+  "description": "Pakistani statutes by date: cited answers, citation audits, amendment history. No repealed law.",
+  "repository": {
+    "url": "https://github.com/hammasbuilds/pak-law-assistant",
+    "source": "github"
+  },
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "pak-law-assistant",
+      "version": "0.2.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "PAKLAW_CORPUS",
+          "description": "Path to a statute corpus (JSON Lines) built with paklaw-corpus. Without it the server runs on a three-provision demonstration sample and says so in every result.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
+        }
+      ]
+    }
+  ]
+}

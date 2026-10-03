@@ -7,6 +7,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Legal Industry",
     "License :: OSI Approved :: MIT License",
+    "Environment :: Console",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -14,6 +15,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Text Processing :: Linguistic",
+    "Topic :: Text Processing :: Indexing",
+    "Natural Language :: English",
+    "Natural Language :: Urdu",
+    "Typing :: Typed",
 ]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,9 +29,13 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/hammasbuilds/pak-law-assistant"
 Issues = "https://github.com/hammasbuilds/pak-law-assistant/issues"
+Source = "https://github.com/hammasbuilds/pak-law-assistant"
 
 [project.scripts]
 paklaw-mcp = "paklaw.mcp_server:main"
+# Same server under the package name, so `uvx pak-law-assistant` (what MCP registry
+# clients run for a PyPI package) starts it without --from.
+pak-law-assistant = "paklaw.mcp_server:main"
 paklaw-corpus = "paklaw.ingest:main"
 
 [project.optional-dependencies]

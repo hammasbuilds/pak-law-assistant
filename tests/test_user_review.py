@@ -8,6 +8,8 @@ nothing, reversed dates taken silently, and the packaging a registry client reli
 from __future__ import annotations
 
 import json
+import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,12 @@ from paklaw.ingest import build_checked
 from paklaw.ingest import main as corpus_main
 from tests.test_mcp_server import body, call, init, run, tool
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - 3.10 has no tomllib; the packaging test is skipped there
+    tomllib = None
+
+ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -172,3 +180,31 @@ def test_newest_protocol_gets_structured_content():
 def test_old_protocol_gets_text_only():
     replies = run([init("2025-03-26"), call("corpus_info", {})])
     assert "structuredContent" not in replies[1]["result"]
+
+
+# ---- packaging for the MCP registry --------------------------------------------------
+
+
+@pytest.mark.skipif(tomllib is None, reason="tomllib needs Python 3.11")
+def test_registry_manifest_matches_the_package():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    manifest = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+    package = manifest["packages"][0]
+
+    assert package["identifier"] == project["name"]
+    assert package["version"] == manifest["version"] == project["version"]
+    # a registry client runs `uvx <identifier>`, which needs a script of that name
+    assert project["scripts"][project["name"]] == "paklaw.mcp_server:main"
+    assert len(manifest["description"]) <= 100
+    assert [v["name"] for v in package["environmentVariables"]] == ["PAKLAW_CORPUS"]
+
+    # PyPI ownership check: the README (the PyPI description) names the server
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert re.search(r"mcp-name: " + re.escape(manifest["name"]) + r"(\s|-->)", readme)
+
+
+def test_package_version_matches_the_library():
+    from paklaw import __version__
+
+    manifest = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+    assert manifest["version"] == __version__

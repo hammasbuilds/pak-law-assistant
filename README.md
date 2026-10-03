@@ -1,6 +1,8 @@
 <h1 align="center">pak-law-assistant (Python · BM25 · temporal validity graph)</h1>
 <p align="center"><i>Legal question answering over Pakistani statutes that will not cite a repealed provision</i></p>
 
+<!-- mcp-name: io.github.hammasbuilds/pak-law-assistant -->
+
 <p align="center">
   <a href="#the-failure-this-exists-to-prevent">The failure it prevents</a> &middot;
   <a href="#four-refusal-conditions">Four refusals</a> &middot;
@@ -107,6 +109,10 @@ Reported citations matter because a statute's *meaning* frequently lives in the 
 rather than the text. `Order XXXIX Rule 1` parses as **one** citation, not two — civil
 procedure is cited by Order and Rule, and splitting it makes the count of authorities in
 an answer wrong.
+
+Urdu and Roman Urdu citations resolve to the same keys: `دفعہ 302 تعزیرات پاکستان`,
+`دفعہ ۳۰۲ تعزیرات پاکستان` (Urdu digits), `dafa 302 PPC` and `آرٹیکل 25 آئین`. Common
+names work too: `Penal Code`, `Criminal Procedure Code`, `ضابطہ فوجداری`.
 
 A bare `section 9` gets **no** statute. Context can supply one explicitly, but it is
 never guessed: attributing a provision to the wrong Act produces something that looks
@@ -256,14 +262,17 @@ if the other citations were clean.
 
 ### Connect it
 
+Install it, then point your client at the `paklaw-mcp` command:
+
 ```bash
 pip install git+https://github.com/hammasbuilds/pak-law-assistant
+paklaw-mcp --check                       # prints what the server will serve, then exits
 claude mcp add pak-law -e PAKLAW_CORPUS=/path/to/statutes.jsonl -- paklaw-mcp   # Claude Code
 ```
 
-Claude Desktop does not inherit your shell's `PATH`, so give it the **full path** to
-`paklaw-mcp` (`where paklaw-mcp` on Windows, `which paklaw-mcp` elsewhere), or let `uvx`
-fetch and run it without installing anything. In `claude_desktop_config.json`:
+Claude Desktop does not inherit your shell's `PATH`, so either give it the **full path**
+to `paklaw-mcp` (`where paklaw-mcp` on Windows, `which paklaw-mcp` elsewhere), or let
+`uvx` fetch and run it without installing anything. In `claude_desktop_config.json`:
 
 ```json
 {
@@ -276,6 +285,15 @@ fetch and run it without installing anything. In `claude_desktop_config.json`:
   }
 }
 ```
+
+On Windows write the corpus path with forward slashes or doubled backslashes
+(`"C:/law/statutes.jsonl"`), since a single backslash is an escape in JSON. Leave
+`PAKLAW_CORPUS` out to try the three-provision sample first.
+
+Once the package is on PyPI the same server starts with `uvx pak-law-assistant` (the
+package also installs a `pak-law-assistant` command for exactly this), which is how MCP
+registry clients run it; `server.json` is its
+[MCP Registry](https://registry.modelcontextprotocol.io) manifest.
 
 | Setting | |
 |---|---|
@@ -302,6 +320,10 @@ paklaw-corpus repeal statutes.jsonl "section 3 PECA" --on 2024-01-01 --by "..."
 
 paklaw-corpus check statutes.jsonl      # the same validation the server runs at start
 ```
+
+The Constitution and the Qanun-e-Shahadat Order are numbered in articles, and `import`
+stores them that way (`--unit` overrides it). A corpus that holds either as *sections* is
+refused at load, because `Article 6` would then find nothing.
 
 `import` reads plain text by default. For the two public sources, say which one, so page
 footers, footnotes and amendment markers are removed before splitting:
@@ -365,9 +387,10 @@ than one live version of a provision.
 
 ## Tests
 
-**206 tests: 57 for the library, 47 for the MCP server, 41 for corpus building and
-source parsing, 17 for record coverage, and 44 regressions, one per defect an independent
-review reproduced. No dependencies, no corpus download.** Run them with
+**226 tests: 57 for the library, 47 for the MCP server, 41 for corpus building and
+source parsing, 17 for record coverage, 44 regressions, one per defect an independent
+review reproduced, and 20 from a second review that drove the installed server as an MCP
+user. No dependencies, no corpus download.** Run them with
 `pip install -e .[dev]` then `pytest`, or `uv run pytest`. CI runs them on Python 3.10 to 3.13, then runs both demos.
 
 | Covered | |
@@ -379,6 +402,7 @@ review reproduced. No dependencies, no corpus download.** Run them with
 | Corpus building | splitting an Act, **a numbered line inside a body is not a section**, **an omitted section is a boundary**, chapters, substitution/repeal/insert keep dates consistent, a refused amendment leaves the file untouched, atomic writes, the index cache is shared per amendment interval and bounded |
 | Regressions | every citation form above, off-topic questions refused, unanswered citations named, filter before cut, `amended_since`, row types checked at load, re-enactment, schedules, null id, misspelt argument, internal error as a tool error, input limit, 10,000-version and 10,000-citation timings |
 | Audit | every citation status, `all_in_force` only when everything was checked, amended-after-the-date flagged, repealed-then-reinstated, word-level diff, statute ordering |
+| Second review | the Constitution imported as articles and a sectioned one refused, Urdu and Roman Urdu citations, Urdu digits, common Act names, whitespace input, reversed dates reported, protocol 2025-11-25, `server.json` agrees with the package |
 | MCP server | every tool called through the protocol, every date required in every schema, version negotiation, notifications get no reply, `as_of` required in the schema, refusal is a result and a bad date is a tool error, no infinite score on the wire, a malformed line does not end the session, batches, **stdout carries only protocol**, a bad corpus exits before serving |
 
 ## Limits
@@ -406,6 +430,8 @@ review reproduced. No dependencies, no corpus download.** Run them with
 - No synthesis. Answers are provision text with citations attached; the system quotes
   law, it does not write it. Narrative phrasing belongs on top, given *verified*
   provisions.
+- Urdu is parsed in citations (`دفعہ 302 تعزیرات پاکستان`) but a question in Urdu prose
+  is only answered when it cites a provision, because the corpus text is English.
 - The MCP server speaks **stdio only**, with no HTTP transport. It is a local tool for
   one user's client, not a hosted service. It exposes tools only, no resources or
   prompts, and the corpus is fixed for the life of the process.
@@ -428,31 +454,49 @@ MIT
 git clone https://github.com/hammasbuilds/pak-law-assistant
 cd pak-law-assistant
 
-pip install -e .         # zero dependencies to resolve
-pytest -q                # 172 tests, no corpus download
+pip install -e ".[dev]"  # the package has no dependencies; dev adds pytest and ruff
+pytest -q                # 226 tests, no corpus download
 python demo.py           # the library
 python demo_mcp.py       # the same questions through the MCP server
 ```
 
 ```python
-from paklaw import Corpus, Provision, LawAssistant
+from paklaw import Corpus, LawAssistant, Provision
+
+original_text = "... imprisonment which may extend to three years ..."
+amended_text = "... imprisonment which may extend to five years ..."
 
 corpus = Corpus()
-corpus.add(Provision(statute="PECA", unit="section", number="20",
-                     heading="Offences against dignity of a natural person",
-                     text=original_text,
-                     in_force_from="2016-08-19", in_force_to="2022-02-20",
-                     manner="substituted", amended_by="Ordinance II of 2022"))
-corpus.add(Provision(statute="PECA", unit="section", number="20",
-                     heading="Offences against dignity of a natural person",
-                     text=amended_text, in_force_from="2022-02-20"))
+corpus.add(
+    Provision(
+        statute="PECA",
+        unit="section",
+        number="20",
+        heading="Offences against dignity of a natural person",
+        text=original_text,
+        in_force_from="2016-08-19",
+        in_force_to="2022-02-20",
+        manner="substituted",
+        amended_by="Ordinance II of 2022",
+    )
+)
+corpus.add(
+    Provision(
+        statute="PECA",
+        unit="section",
+        number="20",
+        heading="Offences against dignity of a natural person",
+        text=amended_text,
+        in_force_from="2022-02-20",
+    )
+)
 
-corpus.validate()        # overlapping versions, gaps, multiple live versions
+print(corpus.validate())  # [] - no overlapping versions, gaps or multiple live versions
 
 a = LawAssistant(corpus=corpus)
-a.answer("punishment under section 20 PECA", as_of="2026-09-11").render()
-a.answer("punishment under section 20 PECA", as_of="2018-01-01").render()  # different
-a.history("section 20 PECA")
+print(a.answer("punishment under section 20 PECA", as_of="2026-09-11").render())
+print(a.answer("punishment under section 20 PECA", as_of="2018-01-01").render())  # differs
+print(a.history("section 20 PECA"))
 ```
 
 Loading a corpus is your job, and `paklaw-corpus` does the mechanical part (see
