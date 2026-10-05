@@ -847,3 +847,42 @@ def test_an_unrecognised_act_stays_in_the_citation_it_was_written_in():
         "Section 302 PPC": "in_force",
         "Section 9": "no_act_named",
     }
+
+
+# --- the schemas, under a real validator ------------------------------------------------
+#
+# `_check_against_schema` above is enough JSON Schema to prove the declared shape is the
+# shape returned, written out because the package has no dependencies. It cannot check
+# the schemas themselves, and it is an approximation of a specification - so a real
+# validator runs beside it, as a development dependency rather than a runtime one.
+# It earned its place immediately: it found `list_provisions` refusing with a
+# `refusal_status` the shared enum did not list, on the one path no case covered.
+
+jsonschema = pytest.importorskip("jsonschema", reason="dev dependency; see [dependency-groups]")
+
+
+@pytest.mark.parametrize("tool", TOOLS, ids=lambda t: t["name"])
+@pytest.mark.parametrize("which", ["inputSchema", "outputSchema"])
+def test_the_declared_schemas_are_valid_json_schema(tool, which):
+    """A schema that is not valid JSON Schema is a schema no client can use."""
+    schema = tool.get(which)
+    assert schema is not None, f"{tool['name']} declares no {which}"
+    jsonschema.Draft202012Validator.check_schema(schema)
+
+
+@pytest.mark.parametrize("name,arguments", _OUTPUT_CASES)
+def test_every_output_validates_under_a_real_validator(name, arguments):
+    """The same cases the hand-rolled walker runs, under a specification implementation.
+
+    Both, rather than either: the walker catches a key that is returned and never
+    declared, which `additionalProperties` being absent makes legal; the validator
+    catches everything the walker only approximates.
+    """
+    schemas = {tool["name"]: tool.get("outputSchema") for tool in TOOLS}
+    server = LawServer(*load_corpus(None))
+    payload = getattr(server, name)(arguments)
+    problems = [
+        f"{'.'.join(str(p) for p in error.path) or '<root>'}: {error.message}"
+        for error in jsonschema.Draft202012Validator(schemas[name]).iter_errors(payload)
+    ]
+    assert problems == []

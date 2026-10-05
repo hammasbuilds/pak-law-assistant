@@ -6,7 +6,6 @@ authors = [{ name = "Muhammad Hammas" }]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Legal Industry",
-    "License :: OSI Approved :: MIT License",
     "Environment :: Console",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
@@ -22,7 +21,7 @@ classifiers = [
 ]
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 keywords = ["legal", "rag", "pakistan", "bm25", "statute", "urdu", "mcp", "mcp-server"]
 dependencies = []
 
@@ -38,11 +37,11 @@ paklaw-mcp = "paklaw.mcp_server:main"
 pak-law-assistant = "paklaw.mcp_server:main"
 paklaw-corpus = "paklaw.ingest:main"
 
-[project.optional-dependencies]
-dev = ["pytest>=8.3", "ruff>=0.8"]
-
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.8"]
+# jsonschema is a DEV dependency only. The package itself has none, and the
+# hand-rolled checker in the tests exists because of that; this validates the
+# schemas themselves and audits the hand-rolled one, which is a different job.
+dev = ["pytest>=8.3", "ruff>=0.8", "jsonschema>=4.20"]
 
 [build-system]
 requires = ["hatchling"]

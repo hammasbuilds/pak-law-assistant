@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install pytest ruff
+      - run: pip install pytest ruff jsonschema
       - run: ruff check src tests demo.py demo_mcp.py
       - run: ruff format --check src tests demo.py demo_mcp.py
       - run: pip install -e .
