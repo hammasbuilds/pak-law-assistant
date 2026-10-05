@@ -441,7 +441,7 @@ CI badge are the record. What the suite covers:
 | regressions | one per defect an independent review reproduced, each pinned so it cannot come back quietly |
 
 Run them with
-`pip install -e .[dev]` then `pytest`, or `uv run pytest`. CI runs them on Python 3.10 to 3.13, then runs both demos.
+`uv sync --all-groups` then `uv run pytest`, or `pip install -e . && pip install pytest ruff jsonschema`. CI runs them on Python 3.10 to 3.13, then runs both demos.
 
 | Covered | |
 |---|---|
@@ -511,7 +511,8 @@ MIT
 git clone https://github.com/hammasbuilds/pak-law-assistant
 cd pak-law-assistant
 
-pip install -e ".[dev]"  # the package has no dependencies; dev adds pytest and ruff
+uv sync --all-groups     # the package has no dependencies; the dev group adds
+                         # pytest, ruff and jsonschema
 pytest -q                # no corpus download, no network
 python demo.py           # the library
 python demo_mcp.py       # the same questions through the MCP server
