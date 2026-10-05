@@ -502,7 +502,9 @@ TOOLS: list[dict[str, Any]] = [
         "Find every Pakistani legal citation in a passage and resolve each to one canonical "
         "key, so 'Section 302 PPC', 's. 302 of the Pakistan Penal Code' and '§302 PPC' "
         "agree. Handles statutory provisions, Order/Rule CPC, SROs and reported judgments "
-        "(PLD, SCMR, CLC, YLR ...). Needs no corpus; to check the citations against the "
+        "(PLD, SCMR, CLC, YLR ...), rules made under an Act ('rule 5 of the Companies "
+        "Rules'), and foreign series such as AIR, which are marked as foreign rather "
+        "than dropped. Needs no corpus; to check the citations against the "
         "law, use check_citations.",
         {
             "text": {"type": "string", "description": "Any passage of legal text."},

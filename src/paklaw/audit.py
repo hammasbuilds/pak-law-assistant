@@ -18,7 +18,13 @@ import datetime as dt
 import difflib
 import re
 
-from .citation import Citation, locate, resolve_bare, statute_aliases
+from .citation import (
+    Citation,
+    is_foreign_report,
+    locate,
+    resolve_bare,
+    statute_aliases,
+)
 from .corpus import Corpus, Provision
 
 # Statuses, in the order a reader should worry about them.
@@ -114,6 +120,15 @@ def _check_one(corpus: Corpus, c: Citation, date: dt.date, loaded: set[str]) -> 
     entry = {"citation": c.pretty(), "raw": c.raw, "kind": c.kind}
 
     if c.kind != "statutory":
+        if c.kind == "reported" and is_foreign_report(c.report):
+            # Said out loud, for the same reason a foreign Act is: a reader checking a
+            # draft needs to know a cited authority is from another jurisdiction, and
+            # "not held in this corpus" invites them to assume it would be if loaded.
+            return entry | {
+                "status": NOT_CHECKED,
+                "note": f"{c.report} is a foreign law report; this corpus holds Pakistani "
+                "statutes only and cannot speak to it either way",
+            }
         what = "case law" if c.kind == "reported" else "subordinate legislation"
         return entry | {"status": NOT_CHECKED, "note": f"{what} is not held in this corpus"}
     if not c.statute:

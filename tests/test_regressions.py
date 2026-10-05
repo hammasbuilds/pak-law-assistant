@@ -14,7 +14,7 @@ import time
 import pytest
 
 from paklaw.answer import REFUSAL_NO_ACT, REFUSAL_UNKNOWN_CITATION, LawAssistant
-from paklaw.citation import parse
+from paklaw.citation import is_foreign_report, parse
 from paklaw.corpus import CorpusError, Provision, build
 from paklaw.ingest import build_checked, insert, repeal, split_act
 from paklaw.mcp_server import LawServer, load_corpus, serve
@@ -463,3 +463,68 @@ def test_one_provision_cited_five_times_is_one_problem():
     assert report["problems"] == 3
     assert report["distinct_problems"] == 1
     assert report["distinct_citations"] == 1
+
+
+@pytest.mark.parametrize(
+    "text,pretty,key",
+    [
+        # Rules made under an Act are the commonest subordinate form in practice and
+        # parsed to nothing at all, so a draft citing them audited as though it cited
+        # nothing. A silent drop reads as a clean bill of health.
+        (
+            "Rule 5 of the Companies Rules",
+            "Rule 5 of the Companies Rules",
+            "RULES:Companies Rules:5",
+        ),
+        (
+            "rule 12 of the Income Tax Rules 2002",
+            "Rule 12 of the Income Tax Rules 2002",
+            "RULES:Income Tax Rules:12",
+        ),
+    ],
+)
+def test_rules_made_under_an_act_are_found(text, pretty, key):
+    (citation,) = parse(text)
+    assert citation.kind == "subordinate"
+    assert citation.pretty() == pretty
+    assert citation.key == key
+
+
+def test_a_rules_range_is_every_rule_in_it():
+    assert [c.provision for c in parse("rules 3-5 of the Customs Rules")] == ["3", "4", "5"]
+
+
+@pytest.mark.parametrize("text", ["the rules of the game", "under those rules 5 people left"])
+def test_prose_about_rules_is_not_a_citation(text):
+    assert [c for c in parse(text) if c.kind == "subordinate"] == []
+
+
+def test_order_and_rule_of_the_cpc_still_parses_as_one_statutory_citation():
+    """The new rules pattern must not claim the number first."""
+    (citation,) = parse("Order XXXIX Rule 1 CPC")
+    assert (citation.kind, citation.key) == ("statutory", "CPC:rule:XXXIX/1")
+
+
+@pytest.mark.parametrize("text,report", [("AIR 1950 SC 27", "AIR"), ("AIR 1950 Lahore 12", "AIR")])
+def test_a_foreign_report_is_reported_as_foreign_not_dropped(text, report):
+    """It vanished entirely, so a draft of Indian authority audited as citation-free.
+
+    Same argument as an unrecognised Act: a citation nobody parsed is a citation
+    nobody checked, and silence told the reader the opposite of the truth.
+    """
+    (citation,) = parse(text)
+    assert citation.report == report
+    assert is_foreign_report(citation.report)
+
+    server = LawServer(*load_corpus(None))
+    report_out = server.check_citations({"text": text, "as_of": "2026-01-01"})
+    (entry,) = report_out["citations"]
+    assert entry["status"] == "not_checkable"
+    assert "foreign law report" in entry["note"]
+
+
+def test_a_pakistani_report_is_not_called_foreign():
+    assert not is_foreign_report("PLD")
+    assert not is_foreign_report("SCMR")
+    # Written either way; both are the Pakistani series.
+    assert not is_foreign_report("PCrLJ")

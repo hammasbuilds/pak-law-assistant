@@ -88,6 +88,13 @@ _BARE_ABBREVIATIONS = ("PPC", "P.P.C.", "CrPC", "Cr.P.C.", "CPC", "C.P.C.", "PEC
 # Law reports used in Pakistani practice.
 REPORTS = {"PLD", "SCMR", "CLC", "YLR", "MLD", "PTD", "PLC", "CLD", "PCrLJ", "NLR"}
 
+# Foreign series that appear in Pakistani drafting, usually for pre-partition or
+# comparative authority. They are recognised so they can be REPORTED as foreign rather
+# than dropped: the same argument as an unrecognised Act. A citation nobody parsed is a
+# citation nobody checked, and an audit that returns "no citations found" over a draft
+# full of AIR authority has told the reader the opposite of the truth.
+FOREIGN_REPORTS = {"AIR", "SCC", "AC", "WLR", "QB", "KB", "ER", "Cr.LJ", "CrLJ", "ILR"}
+
 # 302, 302A, 302-B, 20(1), 20(1)(a). The hyphenated form is how 489-F and 354-A are
 # written; without it "302-B" is read as 302, a different offence.
 # The leading digits must not be all zeros: no Act has a section 0, and "section 0"
@@ -245,6 +252,18 @@ _ORDER_RULE = re.compile(
     re.I,
 )
 
+# "Rule 5 of the Companies Rules", "rule 12 of the Income Tax Rules 2002". Rules made
+# under an Act are the commonest form of subordinate legislation in practice, and they
+# used to parse to nothing at all - so a draft citing them was audited as though it had
+# cited nothing, which is worse than reporting them as unheld: a silent drop looks like a
+# clean bill of health.
+_RULES = re.compile(
+    _NOT_AFTER_LETTER + r"rules?\s*\.?\s*(?P<numbers>" + _LIST + r")"
+    r"\s*,?\s*(?:of|under)\s+the\s+(?P<rules>" + _ACT_TITLE + r")"
+    r"(?:\s*,?\s*(?P<year>\d{4}))?",
+    re.I,
+)
+
 # "SRO 1125(I)/2011" - subordinate legislation.
 _SRO = re.compile(
     _NOT_AFTER_LETTER
@@ -285,14 +304,25 @@ _COURTS = (
 # Longest first, so "Lahore" is not matched as "Lah" with "ore" left over.
 _COURT = "|".join(sorted((c for c in _COURTS), key=len, reverse=True))
 
+_FOREIGN_UPPER = frozenset(r.upper().replace(".", "") for r in FOREIGN_REPORTS)
+
+
+def is_foreign_report(report: str) -> bool:
+    """Whether this series is a foreign one. `Citation.report` is upper-cased."""
+    return report.upper().replace(".", "") in _FOREIGN_UPPER
+
+
+# Longest first, so PCrLJ is not matched as PLC with a tail left over.
+_REPORT_NAMES = "|".join(sorted(REPORTS | FOREIGN_REPORTS, key=len, reverse=True))
+
 # "PLD 2015 SC 401", "2019 SCMR 1234" - both orderings occur in practice.
 _REPORT_A = re.compile(
-    r"\b(?P<report>" + "|".join(REPORTS) + r")\s+(?P<year>\d{4})\s+"
+    r"\b(?P<report>" + _REPORT_NAMES + r")\s+(?P<year>\d{4})\s+"
     r"(?P<court>" + _COURT + r")?\s*(?P<page>\d+)\b",
     re.I,
 )
 _REPORT_B = re.compile(
-    r"\b(?P<year>\d{4})\s+(?P<report>" + "|".join(REPORTS) + r")\s+"
+    r"\b(?P<year>\d{4})\s+(?P<report>" + _REPORT_NAMES + r")\s+"
     r"(?P<court>" + _COURT + r")?\s*(?P<page>\d+)\b",
     re.I,
 )
@@ -321,6 +351,9 @@ class Citation:
         if self.kind == "reported":
             return f"{self.report}:{self.year}:{self.court or '-'}:{self.page}"
         if self.kind == "subordinate":
+            if self.unit == "rule":
+                # Rules made under an Act, not a statutory order.
+                return f"RULES:{self.named_statute or self.statute}:{self.provision}"
             return f"SRO:{self.provision}:{self.year}"
         return f"{self.statute or 'UNKNOWN'}:{self.unit}:{self.provision}"
 
@@ -328,6 +361,10 @@ class Citation:
         if self.kind == "reported":
             return " ".join(x for x in (self.report, self.year, self.court, self.page) if x)
         if self.kind == "subordinate":
+            if self.unit == "rule":
+                title = self.named_statute or self.statute
+                year = f" {self.year}" if self.year else ""
+                return f"Rule {self.provision} of the {title}{year}".strip()
             return f"SRO {self.provision}/{self.year}"
         if self.unit == "rule" and "/" in self.provision:
             # Written the way it is cited; "Rule XXXIX/1 CPC" is in no judgment.
@@ -403,6 +440,24 @@ def locate(text: str, *, statutes: dict[str, str] | None = None) -> list[tuple[i
         if not named:
             return default
         return extra.get(named.lower()) or _canonical_statute(named, default)
+
+    for match in _RULES.finditer(text):
+        if claim(match):
+            title = " ".join(match.group("rules").split())
+            for number in members(match.group("numbers")):
+                found.append(
+                    (
+                        match.start(),
+                        Citation(
+                            kind="subordinate",
+                            unit="rule",
+                            provision=normalise_number(number),
+                            named_statute=title,
+                            year=match.group("year") or "",
+                            raw=match.group(0),
+                        ),
+                    )
+                )
 
     for match in _ORDER_RULE.finditer(text):
         if claim(match):
