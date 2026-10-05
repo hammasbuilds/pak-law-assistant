@@ -57,6 +57,10 @@ LEGAL_STOPWORDS = {
     "this",
     "that",
     "it",
+    # "its" was the one possessive missing, while "it", "their", "his" and "her" were
+    # all here: "is Pakistan an Islamic state by its Constitution?" carried a pronoun
+    # as a content word and scored provisions on whether they happened to contain one.
+    "its",
     "act",
     "section",
     "sub",
@@ -301,6 +305,11 @@ _SUFFIXES = (
     "ions",
     "ion",
     "ies",
+    # "Islamic" against "Islam": the Constitution's own adjective for its own noun,
+    # and Article 2 ("Islam shall be the State religion") was missing a question that
+    # used it while Article 1 - which happens to contain the word "Islamic" in a name -
+    # was not.
+    "ic",
     "ers",
     "er",
     "ors",

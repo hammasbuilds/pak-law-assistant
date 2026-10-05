@@ -390,15 +390,22 @@ MUST_REFUSE: list[str] = [
     "what is the punishment for qatl shibh-i-amd?",
 ]
 
-#: Measured, not chosen: 25 right, 1 wrong, 8 refused of 34, and 10 of 10 refused.
-MIN_PARAPHRASE_RIGHT = 25
-MAX_PARAPHRASE_WRONG = 1
+#: Measured, not chosen: 26 right, 0 wrong, 8 refused of 34, and 10 of 10 refused.
+#:
+#: It was 25/1/8. The one wrong answer was "is Pakistan an Islamic state by its
+#: Constitution?" returning Article 1, and it was two gaps rather than a ranking
+#: failure: "its" was a content word while "it" was a stopword, and "Islamic" did not
+#: stem to "Islam", so Article 2 - "Islam shall be the State religion" - was missing the
+#: word the question was about while Article 1, which carries "Islamic" inside a name,
+#: was not. The budget is zero again rather than one, because a budget nobody is using
+#: is the only kind worth keeping.
+MIN_PARAPHRASE_RIGHT = 26
+MAX_PARAPHRASE_WRONG = 0
 
-#: The one wrong answer, named. A count on its own would let a new wrong answer in as
-#: soon as an old one was fixed, which is how a budget becomes a ratchet.
-KNOWN_WRONG = {
-    "is Pakistan an Islamic state by its Constitution?": "Article 1 CONST",
-}
+#: Wrong answers that are known and accepted. Empty, and a count on its own would let a
+#: new wrong answer in as soon as an old one was fixed - which is how a budget becomes a
+#: ratchet - so the test names them as well as counting them.
+KNOWN_WRONG: dict[str, str] = {}
 
 
 def test_the_same_questions_asked_differently(assistant):
