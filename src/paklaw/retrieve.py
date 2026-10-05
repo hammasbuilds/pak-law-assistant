@@ -205,6 +205,10 @@ class Hit:
     matched_terms: dict[str, float] = field(default_factory=dict)
     # Distinct content terms of the question this provision does not contain.
     missing_terms: list[str] = field(default_factory=list)
+    # What the ranking actually sorted on: `score` weighted by coverage. Kept as a
+    # field rather than recomputed, so the order a client sees can be checked
+    # against a number it was given.
+    ranking: float = 0.0
 
     @property
     def coverage(self) -> float:
@@ -215,7 +219,14 @@ class Hit:
     def why(self) -> str:
         """Why this provision was returned, in terms a lawyer can check."""
         ranked = sorted(self.matched_terms.items(), key=lambda kv: -kv[1])[:5]
-        return ", ".join(f"{term} ({weight:.2f})" for term, weight in ranked)
+        terms = ", ".join(f"{term} ({weight:.2f})" for term, weight in ranked)
+        matched = len(self.matched_terms)
+        total = matched + len(self.missing_terms)
+        # The share matched is what the ranking weights by, so it belongs in the
+        # explanation - but only for a search. A provision the question cited by
+        # number is a lookup with one synthetic term, and "1 of 1 terms" there
+        # describes nothing.
+        return f"{matched} of {total} terms — {terms}" if total > 1 else terms
 
 
 @dataclass
@@ -225,6 +236,28 @@ class BM25Index:
     # Matching a section *number* should outrank matching its prose.
     number_boost: float = 3.0
     heading_boost: float = 2.0
+    # How hard to prefer a provision that contains ALL of the question's terms.
+    #
+    # BM25 alone gets this wrong here, and the failure is not subtle. Asked "how is
+    # imprisonment for life reckoned in fractions of punishment?", it ranked s.53
+    # "Punishments" (385 characters, 3 of 5 terms) above s.57 "Fractions of terms of
+    # punishment" (2,602 characters, 5 of 5) — because length normalisation taxes the
+    # longer provision harder than the two extra terms reward it. The answer was in
+    # the corpus, scored second, and a confident citation of the wrong section came
+    # out instead.
+    #
+    # Statute text is terminology-bound: a question's words are terms of art, and a
+    # provision containing every one of them is the answer. So the score is weighted
+    # by the fraction of query terms matched — Lucene's old `coord`, dropped there on
+    # scoring-theory grounds that do not apply to short keyword queries over a small,
+    # controlled vocabulary.
+    #
+    # Measured on tests/test_retrieval_quality.py: any weight above zero fixes that
+    # question and nothing regresses; `b` makes no difference at all across 0.0-0.75,
+    # which is why it is still the standard 0.75 rather than tuned. 1.0 is the linear
+    # form — multiply by the share matched — and is the easiest to explain to anyone
+    # auditing a ranking.
+    coverage_weight: float = 1.0
 
     documents: list[Provision] = field(default_factory=list)
     _tokens: list[list[str]] = field(default_factory=list)
@@ -322,16 +355,18 @@ class BM25Index:
 
             if score > 0:
                 missing = sorted(set(terms) - set(matched))
+                coverage = len(matched) / (len(matched) + len(missing))
                 hits.append(
                     Hit(
                         provision=provision,
                         score=round(score, 6),
                         matched_terms=matched,
                         missing_terms=missing,
+                        ranking=round(score * coverage**self.coverage_weight, 6),
                     )
                 )
 
-        hits.sort(key=lambda h: -h.score)
+        hits.sort(key=lambda h: -h.ranking)
         return hits[:limit]
 
 
