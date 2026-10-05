@@ -136,9 +136,13 @@ class LawAssistant:
     min_coverage: float = 0.5
     max_passages: int = 3
 
+    # Ranking parameters, forwarded to the index. Here so a sweep can reach them
+    # without editing the source, which is how one sweep came to measure nothing.
+    tuning: dict = field(default_factory=dict)
+
     def __post_init__(self) -> None:
         if self.search is None:
-            self.search = LawSearch(corpus=self.corpus)
+            self.search = LawSearch(corpus=self.corpus, tuning=self.tuning)
 
     @property
     def aliases(self) -> dict[str, str]:

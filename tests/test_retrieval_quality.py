@@ -270,3 +270,53 @@ def test_a_rephrasing_of_the_same_question_still_finds_the_same_provision(assist
     )
     assert not answer.refused, answer.refusal_reason
     assert answer.passages[0].citation == "Section 57 PPC"
+
+
+def test_the_provision_headed_with_the_question_wins_a_tie(assistant):
+    """Asked "what is the State?", it answered from Article 2 CONST.
+
+    Article 2 is "Islam to be State religion"; Article 7 is headed "Definition of the
+    State". Both contain the word, both cover the question's one content word
+    completely, and Article 2 is shorter — so BM25 preferred it and coverage could not
+    separate them. Among provisions that cover a question equally, the one the
+    draftsman headed with those words is the one about them.
+    """
+    answer = assistant.answer("what is the State?", as_of="2026-01-01")
+    assert not answer.refused, answer.refusal_reason
+    assert answer.passages[0].citation == "Article 7 CONST"
+
+
+def test_the_heading_tiebreak_cannot_overturn_coverage():
+    """Which is why it is a tiebreak. As a multiplier it broke the fractions question.
+
+    s.55 "Commutation of sentence of imprisonment for life" matches two of that
+    question's heading words and s.57 "Fractions of terms of punishment" matches none —
+    so a heading multiplier large enough to fix "what is the State?" also reversed the
+    coverage difference, 0.80 against 0.60, that was the whole point of the earlier fix.
+    Coverage is the primary key, so no heading weight can do that.
+    """
+    corpus = build_checked(_corpus_rows(), source="fixtures")
+    question = "imprisonment for life is reckoned as how many years"
+    for heading_weight in (0.0, 1.5, 5.0, 50.0):
+        assistant = LawAssistant(corpus=corpus, tuning={"heading_weight": heading_weight})
+        answer = assistant.answer(question, as_of="2026-01-01")
+        assert not answer.refused, heading_weight
+        assert answer.passages[0].citation == "Section 57 PPC", heading_weight
+
+
+def test_the_ranking_parameters_are_reachable_without_editing_the_source():
+    """A sweep that sets them on the class measures nothing, and one did.
+
+    `BM25Index` is a dataclass, so its defaults are captured in `__init__` and
+    `BM25Index.b = 0.1` does not change a new instance. A sweep written that way
+    reported that `b` made no difference across its whole range — true of the
+    experiment, and nothing to do with `b`.
+    """
+    corpus = build_checked(_corpus_rows(), source="fixtures")
+    default = LawAssistant(corpus=corpus)
+    tuned = LawAssistant(corpus=corpus, tuning={"heading_weight": 0.0})
+    question = "what is the State?"
+    # The parameter reaches the index: at weight 0 the heading cannot break the tie and
+    # the answer changes.
+    assert default.answer(question, as_of="2026-01-01").passages[0].citation == "Article 7 CONST"
+    assert tuned.answer(question, as_of="2026-01-01").passages[0].citation != "Article 7 CONST"

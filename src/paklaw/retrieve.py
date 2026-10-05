@@ -275,32 +275,38 @@ class Hit:
 @dataclass
 class BM25Index:
     k1: float = 1.5
+    # Length normalisation, left at the standard value. An earlier note here claimed a
+    # sweep had shown b "makes no difference at all across 0.0-0.75"; that sweep set
+    # `BM25Index.b` on the class, and because this is a dataclass the default is
+    # captured in __init__, so every run used 0.75 and the experiment measured nothing.
+    # A real sweep, reachable through `LawSearch(tuning=...)`, shows b DOES matter: at
+    # b=0.40 a lower heading weight suffices for the same result. 0.75 is kept because
+    # the standard value already works, not because tuning it was tried and failed.
     b: float = 0.75
     # Matching a section *number* should outrank matching its prose.
     number_boost: float = 3.0
     heading_boost: float = 2.0
-    # How hard to prefer a provision that contains ALL of the question's terms.
+    # Coverage - the share of the question's terms a provision contains - decides the
+    # order outright, and these notes record how that came to be the rule rather than a
+    # weighting, because the weighting version was wrong twice.
     #
-    # BM25 alone gets this wrong here, and the failure is not subtle. Asked "how is
-    # imprisonment for life reckoned in fractions of punishment?", it ranked s.53
-    # "Punishments" (385 characters, 3 of 5 terms) above s.57 "Fractions of terms of
-    # punishment" (2,602 characters, 5 of 5) — because length normalisation taxes the
-    # longer provision harder than the two extra terms reward it. The answer was in
-    # the corpus, scored second, and a confident citation of the wrong section came
-    # out instead.
+    # BM25 alone fails here and the failure is not subtle. Asked "how is imprisonment
+    # for life reckoned in fractions of punishment?", it ranked s.53 "Punishments" (385
+    # characters, 3 of 5 terms) above s.57 "Fractions of terms of punishment" (2,602
+    # characters, 5 of 5): length normalisation taxes the longer provision harder than
+    # two extra terms reward it. The answer was in the corpus, scored second, and a
+    # confident citation of the wrong section came out.
     #
-    # Statute text is terminology-bound: a question's words are terms of art, and a
-    # provision containing every one of them is the answer. So the score is weighted
-    # by the fraction of query terms matched — Lucene's old `coord`, dropped there on
-    # scoring-theory grounds that do not apply to short keyword queries over a small,
-    # controlled vocabulary.
+    # The first fix multiplied the score by coverage**weight - Lucene's old `coord`.
+    # That fixed the one phrasing it was written beside and not the weakness: a
+    # rephrasing with none of s.57's heading words still lost. Coverage is now the
+    # primary sort key, which makes the exponent EXACTLY inert - within a group of equal
+    # coverage it is a constant factor that cancels, and between groups coverage already
+    # decided - so the knob is gone rather than left looking tuned.
     #
-    # Measured on tests/test_retrieval_quality.py: any weight above zero fixes that
-    # question and nothing regresses; `b` makes no difference at all across 0.0-0.75,
-    # which is why it is still the standard 0.75 rather than tuned. 1.0 is the linear
-    # form — multiply by the share matched — and is the easiest to explain to anyone
-    # auditing a ranking.
-    coverage_weight: float = 1.5
+    # Statute text is terminology-bound. A question's words are terms of art, and a
+    # provision containing every one of them is the answer, whatever the term weights
+    # say.
     # The heading is a TIEBREAK, never a multiplier, and the distinction was forced by
     # two questions that pull opposite ways.
     #
@@ -320,7 +326,7 @@ class BM25Index:
     # question matched - how much that provision is ABOUT those words - not the share of
     # the question found in the heading, which both of the Article 2/7 headings score at
     # 1.00 and which therefore separates nothing.
-    heading_weight: float = 1.0
+    heading_weight: float = 1.5
 
     documents: list[Provision] = field(default_factory=list)
     _tokens: list[list[str]] = field(default_factory=list)
@@ -425,7 +431,8 @@ class BM25Index:
 
             if score > 0:
                 missing = sorted(set(terms) - set(matched))
-                coverage = len(matched) / (len(matched) + len(missing))
+                # Coverage is `Hit.coverage`, computed from matched and missing; it is
+                # the sort's primary key and no longer enters `ranking`.
                 heading = self._heading_tokens[index]
                 hit_in_heading = {t for t in heading if any(t in self._forms(q) for q in terms)}
                 heading_coverage = len(hit_in_heading) / len(heading) if heading else 0.0
@@ -437,7 +444,7 @@ class BM25Index:
                         missing_terms=missing,
                         heading_coverage=round(heading_coverage, 4),
                         missing_qualifiers=sorted(set(missing) & QUALIFIERS),
-                        ranking=round(score * coverage**self.coverage_weight, 6),
+                        ranking=round(score * (1 + self.heading_weight * heading_coverage), 6),
                     )
                 )
 
@@ -446,9 +453,7 @@ class BM25Index:
         # than one containing most of them, whatever the term weights say - and among
         # provisions that cover it equally, the one the draftsman headed with those
         # words is the one about them.
-        hits.sort(
-            key=lambda h: (-h.coverage, -h.ranking * (1 + self.heading_weight * h.heading_coverage))
-        )
+        hits.sort(key=lambda h: (-h.coverage, -h.ranking))
         return hits[:limit]
 
 
@@ -462,6 +467,14 @@ class LawSearch:
     """
 
     corpus: Corpus
+    # Ranking parameters, passed to every index this builds.
+    #
+    # They used to be reachable only by editing BM25Index's defaults, and that made a
+    # sweep silently measure nothing: BM25Index is a dataclass, so its defaults are
+    # captured in __init__ and `BM25Index.b = 0.1` does not change a new instance. A
+    # sweep written that way reported "b makes no difference from 0.0 to 0.75", which
+    # was true of the experiment and said nothing about b.
+    tuning: dict = field(default_factory=dict)
     # One index per date asked about. A long-running server is asked about arbitrarily
     # many dates, so the cache is bounded; the least recently used index is dropped.
     max_indexes: int = 32
@@ -489,7 +502,7 @@ class LawSearch:
         if key in self._indexes:
             self._indexes.move_to_end(key)
         else:
-            self._indexes[key] = BM25Index().fit(self.corpus.as_of(as_of))
+            self._indexes[key] = BM25Index(**self.tuning).fit(self.corpus.as_of(as_of))
             while len(self._indexes) > self.max_indexes:
                 self._indexes.popitem(last=False)
         return self._indexes[key]
