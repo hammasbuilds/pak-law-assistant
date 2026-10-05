@@ -132,6 +132,12 @@ STATUTE_VOCABULARY: dict[str, tuple[str, ...]] = {
     "murder": ("qatl", "amd"),
     "homicide": ("qatl",),
     "manslaughter": ("qatl", "khata"),
+    # The statute says "causing death"; a person asks about killing.
+    "killing": ("qatl", "death"),
+    # Ikrah is compulsion. s.303 PPC is headed "Qatl committed under ikrah-i-tam or
+    # ikrah-i-naqis", and a question about duress reached none of it.
+    "duress": ("ikrah",),
+    "compulsion": ("ikrah",),
     "theft": ("chori",),
     "robbery": ("haraabah",),
     "adultery": ("zina",),

@@ -206,8 +206,9 @@ The same library, exposed to Claude Desktop, Claude Code or any other
 [Model Context Protocol](https://modelcontextprotocol.io) client as **eight read-only
 tools**. It still has zero dependencies: the server implements the stdio transport
 directly (newline-delimited JSON-RPC) instead of pulling in an SDK. Every tool was called
-through the official Python SDK client (`mcp` 2.2.0), and 47 tests drive the server byte
-by byte, beside a regression suite that calls it the same way, including as a real subprocess.
+through the official Python SDK client (`mcp` 2.2.0), and the suite drives the server
+byte by byte over a pipe — including as a real subprocess, and including a check that
+each tool's structured result matches the `outputSchema` it declares.
 
 | Tool | Use it for |
 |---|---|
@@ -414,12 +415,20 @@ than one live version of a provision.
 
 ## Tests
 
-**280 tests: 53 for the library, 68 for the MCP server (including a schema check that
-every tool's `structuredContent` matches its declared `outputSchema`, on every path
-including the refusals), 24 for corpus building, 17 for source parsing, 17 for record
-coverage, 77 regressions — one per defect an independent review reproduced — 20 from a
-review that drove the installed server as an MCP user, and 4 for the citation audit. No
-dependencies, no corpus download.** Run them with
+**No dependencies, no corpus download, and no number quoted here** — this paragraph
+has said 49, then 226, then 280, each of them true for about a day. `pytest -q` and the
+CI badge are the record. What the suite covers:
+
+| Area | What it holds |
+|---|---|
+| the library | retrieval, answering, the four refusal conditions |
+| the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included |
+| corpus building | the importer against real statute layouts from two public sources |
+| record coverage | what the corpus does and does not claim to know |
+| retrieval quality | 17 questions in a person's words over 26 real provisions, scored for right, **wrong** and refused — the wrong count is the one that must stay at zero |
+| regressions | one per defect an independent review reproduced, each pinned so it cannot come back quietly |
+
+Run them with
 `pip install -e .[dev]` then `pytest`, or `uv run pytest`. CI runs them on Python 3.10 to 3.13, then runs both demos.
 
 | Covered | |
@@ -484,7 +493,7 @@ git clone https://github.com/hammasbuilds/pak-law-assistant
 cd pak-law-assistant
 
 pip install -e ".[dev]"  # the package has no dependencies; dev adds pytest and ruff
-pytest -q                # 280 tests, no corpus download
+pytest -q                # no corpus download, no network
 python demo.py           # the library
 python demo_mcp.py       # the same questions through the MCP server
 ```

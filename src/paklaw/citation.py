@@ -565,3 +565,30 @@ def resolve_bare(citations: list[Citation], *, default_statute: str) -> list[Cit
         else replace(c, statute=default_statute)
         for c in citations
     ]
+
+
+# Statute names, longest first, so "pakistan penal code" is preferred over "penal code".
+_STATUTE_PHRASES = sorted(STATUTES, key=len, reverse=True)
+
+
+def find_statute(text: str, *, extra: dict[str, str] | None = None) -> tuple[str, str] | None:
+    """A statute named in a question, and the words that named it.
+
+    A question like "what does the word animal mean in the Penal Code?" is scoped to an
+    Act. Those words say WHICH statute to read, not what to match inside it — and
+    counting them as content terms is how the question gets refused for missing "penal"
+    and "code", which appear in no provision's text because they are the name of the
+    book the provisions are in.
+
+    Returns (key, matched phrase) or None. The phrase is returned so a caller can take
+    those tokens out of the query rather than guessing which ones they were.
+    """
+    lowered = re.sub(r"\s+", " ", text.lower())
+    table = {**STATUTES, **(extra or {})}
+    phrases = sorted(table, key=len, reverse=True)
+    for phrase in phrases:
+        # Whole words only: "code" must not match inside "coded", and a two-letter key
+        # must not match inside another word.
+        if re.search(rf"(?<![\w.]){re.escape(phrase)}(?![\w])", lowered):
+            return table[phrase], phrase
+    return None

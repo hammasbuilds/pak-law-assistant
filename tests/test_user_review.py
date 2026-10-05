@@ -208,3 +208,25 @@ def test_package_version_matches_the_library():
 
     manifest = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
     assert manifest["version"] == __version__
+
+
+def test_the_readme_quotes_no_test_count():
+    """It has said 49, then 226, then 280, each true for about a day.
+
+    A number in prose is a claim that nothing updates, and this README carried a
+    wrong one every time the suite grew. `pytest -q` and the CI badge are the
+    record; the fenced blocks are exempt because a quoted command is not a claim.
+    """
+    import re
+    from pathlib import Path
+
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
+    prose, inside = [], False
+    for line in readme.splitlines():
+        if line.startswith("```"):
+            inside = not inside
+            continue
+        if not inside:
+            prose.append(line)
+    found = re.search(r"\b\d+ tests\b", "\n".join(prose))
+    assert not found, f"README states {found.group(0)!r}; let the suite be the record"

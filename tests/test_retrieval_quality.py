@@ -71,19 +71,27 @@ UNANSWERABLE: list[str] = [
     "what notice must a landlord give before eviction?",
 ]
 
-#: Measured, with the coordination factor in retrieve.py: 13 right, 0 wrong, 4
-#: refused of 17, and 6 of 6 refused when the corpus cannot answer. Before it, 12
-#: right and 1 wrong - "how is imprisonment for life reckoned in fractions of
-#: punishment?" cited s.53 Punishments instead of s.57 Fractions of terms of
-#: punishment, which contains every word of the question.
+#: Measured: 16 right, 0 wrong, 1 refused of 17, and 6 of 6 refused when the corpus
+#: cannot answer. Three changes got it there from 12 right / 1 wrong, and each was
+#: made because this file reported the failure:
 #:
-#: The four refusals are honest misses, not bugs: each asks in words the statute
-#: never uses ("the official name of the country" against "shall be known as the
-#: Islamic Republic of Pakistan"), and lexical retrieval cannot bridge them. They
-#: are left in rather than deleted, because a benchmark trimmed to what already
-#: passes measures nothing - and because refusing is the correct behaviour when the
-#: match is weak.
-MIN_ANSWERED = 13  # of 17, measured
+#:   coordination factor   s.53 Punishments (385 chars, 3 of 5 terms) outranked s.57
+#:                         Fractions of terms of punishment (2,602 chars, 5 of 5),
+#:                         because BM25 length normalisation taxed the longer
+#:                         provision harder than two extra terms rewarded it.
+#:   statute scoping       "what does the word animal mean in the Penal Code?" was
+#:                         refused for missing "penal" and "code" - words in no
+#:                         provision's text, because they name the book rather than
+#:                         anything in it.
+#:   statute vocabulary    "duress" never reached ikrah; "killing" never reached
+#:                         "causing death".
+#:
+#: The one refusal left is an honest miss: "the official name of the country" against
+#: "shall be known as the Islamic Republic of Pakistan" shares no word with it, and
+#: lexical retrieval cannot bridge that. It stays in rather than being deleted,
+#: because a benchmark trimmed to what already passes measures nothing - and because
+#: refusing is the correct behaviour when the match is weak.
+MIN_ANSWERED = 16  # of 17, measured
 MAX_WRONG = 0  # a confident answer about the wrong provision
 MIN_REFUSED_WHEN_UNANSWERABLE = 6  # of 6
 
@@ -185,3 +193,47 @@ def test_a_cited_provision_is_a_lookup_not_a_search(assistant):
         answer = assistant.answer(question, as_of="2026-01-01")
         assert not answer.refused, question
         assert answer.passages[0].citation == expected
+
+
+def test_naming_an_act_scopes_the_question_instead_of_failing_it(assistant):
+    """The words that name a statute are not words to match inside it.
+
+    "what does the word animal mean in the Penal Code?" was refused for missing
+    "penal" and "code" — which appear in no provision's text, because they are the
+    name of the book the provisions are in.
+    """
+    answer = assistant.answer(
+        "what does the word animal mean in the Penal Code?", as_of="2026-01-01"
+    )
+    assert not answer.refused, answer.refusal_reason
+    assert answer.passages[0].citation == "Section 47 PPC"
+
+
+def test_scoping_restricts_the_search_to_the_named_act(assistant):
+    """Naming an Act must not just drop words - it must narrow where to look.
+
+    Unscoped, this is answered from the Constitution. Scoped to the Penal Code it
+    must refuse rather than reach for the next-best thing, because a question about
+    the Penal Code answered from the Constitution is an answer about the wrong law.
+    """
+    everywhere = assistant.answer("is Islam the state religion?", as_of="2026-01-01")
+    assert not everywhere.refused
+    assert everywhere.passages[0].statute == "CONST"
+
+    scoped = assistant.answer(
+        "is Islam the state religion under the Penal Code?", as_of="2026-01-01"
+    )
+    assert scoped.refused or scoped.passages[0].statute == "PPC"
+
+
+def test_an_explicit_statute_argument_still_wins(assistant):
+    """The caller knows the context; a name in the text must not override it."""
+    answer = assistant.answer(
+        "what does the word animal mean in the Penal Code?",
+        as_of="2026-01-01",
+        statute="CONST",
+    )
+    # Scoped to the Constitution by the caller, this cannot be answered at all, and
+    # answering it from the PPC because the text said "Penal Code" would be the
+    # argument being silently ignored.
+    assert answer.refused or answer.passages[0].statute == "CONST"

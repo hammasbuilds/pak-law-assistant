@@ -23,9 +23,10 @@ optional step that receives *verified* provisions, never the raw query.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass, field
 
-from .citation import Citation, parse, statute_aliases
+from .citation import Citation, find_statute, parse, statute_aliases
 from .corpus import Corpus
 from .retrieve import Hit, LawSearch
 
@@ -258,9 +259,19 @@ class LawAssistant:
                 result.refusal_reason = f"{REFUSAL_NO_ACT}: {', '.join(no_act)}"
                 return result
 
-        hits = self.search.search(
-            question, as_of=as_of_date, limit=self.max_passages, statute=statute
-        )
+        # A question that NAMES an Act is scoped to it: "what does the word animal mean
+        # in the Penal Code?" says which statute to read, and the words that say so are
+        # not content to match against a provision. Leaving them in refused the question
+        # for missing "penal" and "code" — words that appear in no provision's text,
+        # because they are the name of the book the provisions are in.
+        asked = question
+        if statute is None:
+            named = find_statute(question, extra=self.aliases)
+            if named is not None:
+                statute, phrase = named
+                asked = re.sub(re.escape(phrase), " ", question, flags=re.I)
+
+        hits = self.search.search(asked, as_of=as_of_date, limit=self.max_passages, statute=statute)
 
         if not hits:
             result.refused = True
