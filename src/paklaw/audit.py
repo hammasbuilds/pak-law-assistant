@@ -83,6 +83,10 @@ def check_citations(
     counts: dict[str, int] = {}
     for r in results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
+    # Every occurrence is reported, with its offset, because an editor has to find each
+    # one. But a draft that cites one repealed section in five places has one problem to
+    # fix, not five, and a count that cannot tell those apart overstates the damage.
+    distinct_problems = len({r["citation"] for r in results if r["status"] in PROBLEMS})
 
     problems = [r for r in results if r["status"] in PROBLEMS]
     review = [r for r in results if r["status"] in REVIEW]
@@ -92,6 +96,8 @@ def check_citations(
         "citations": results,
         "counts": counts,
         "problems": len(problems),
+        "distinct_problems": distinct_problems,
+        "distinct_citations": len({r["citation"] for r in results}),
         "review": len(review),
         "unverified": len(unverified),
         # Clean only when every citation was checked and passed. Nothing checked is not

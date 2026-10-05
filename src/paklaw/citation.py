@@ -90,7 +90,13 @@ REPORTS = {"PLD", "SCMR", "CLC", "YLR", "MLD", "PTD", "PLC", "CLD", "PCrLJ", "NL
 
 # 302, 302A, 302-B, 20(1), 20(1)(a). The hyphenated form is how 489-F and 354-A are
 # written; without it "302-B" is read as 302, a different offence.
-_NUMBER = r"\d{1,4}(?!\d)(?:-?[A-Z]{1,3}(?![a-z]))?(?:\(\d{1,3}[A-Z]?\))*(?:\([a-z]{1,4}\))?"
+# The leading digits must not be all zeros: no Act has a section 0, and "section 0"
+# parsing to a real-looking citation meant an audit reported it as an unknown provision
+# of the PPC rather than as something that is not a citation at all.
+_NUMBER = (
+    r"(?!0+(?![1-9]))\d{1,4}(?!\d)(?:-?[A-Z]{1,3}(?![a-z]))?"
+    r"(?:\(\d{1,3}[A-Z]?\))*(?:\([a-z]{1,4}\))?"
+)
 # Later members of a list — "sections 302/34", "302, 34 and 109". At most three digits, so
 # "section 20, 2016" does not read the year as a second section.
 _LIST_MEMBER = r"\d{1,3}(?!\d)(?:-?[A-Z]{1,3}(?![a-z]))?(?:\(\d{1,3}[A-Z]?\))*(?:\([a-z]{1,4}\))?"
@@ -195,7 +201,10 @@ def _patterns(extra: tuple[str, ...] = ()) -> tuple[re.Pattern, re.Pattern, re.P
     )
     section = re.compile(
         _NOT_AFTER_LETTER
-        + r"(?:sections?|secs?\.?|ss?\.|§§?|u/ss?\.?|daf(?:a|ah|fa)|دفعہ|دفعات)\s*(?P<numbers>"
+        # The dot is optional on the bare abbreviation too: "s 302 PPC" and
+        # "ss 302/34" are written without it constantly, and _NOT_AFTER_LETTER
+        # already stops the "s" of a word from starting a citation.
+        + r"(?:sections?|secs?\.?|ss?\.?|§§?|u/ss?\.?|daf(?:a|ah|fa)|دفعہ|دفعات)\s*(?P<numbers>"
         + _LIST
         + r")"
         + statute,

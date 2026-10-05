@@ -319,7 +319,13 @@ TOOLS: list[dict[str, Any]] = [
                 "description": "How many citations got each status.",
                 "additionalProperties": {"type": "integer"},
             },
-            "problems": {"type": "integer"},
+            "problems": {"type": "integer", "description": "Occurrences, not provisions."},
+            "distinct_problems": {
+                "type": "integer",
+                "description": "Provisions to fix. One repealed section cited five times "
+                "is one problem, not five.",
+            },
+            "distinct_citations": {"type": "integer"},
             "review": {"type": "integer"},
             "unverified": {"type": "integer"},
             "verdict": {

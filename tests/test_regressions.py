@@ -423,3 +423,43 @@ def test_reported_citations_outside_the_supreme_court_are_found(text, court):
     (citation,) = parse(text)
     assert citation.kind == "reported"
     assert citation.court == court
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        # No Act has a section 0, so this is not a citation at all. It parsed, and
+        # an audit then reported it as an unknown provision OF the PPC - a fake
+        # provision of a real Act, which reads like a finding about the draft.
+        ("section 0 PPC", []),
+        ("section 00 PPC", []),
+        # Written without the dot constantly, and silently missed.
+        ("s 302 ppc", ["302"]),
+        ("ss 302/34 PPC", ["302", "34"]),
+        # ...without turning the "s" of a word into a citation marker.
+        ("Rs 500 was paid", []),
+        ("its 302 sections", []),
+        ("as 302 goes", []),
+    ],
+)
+def test_the_bare_section_marker(text, expected):
+    assert [c.provision for c in parse(text)] == expected
+
+
+def test_one_provision_cited_five_times_is_one_problem():
+    """`problems` counted occurrences, so a draft with one bad section cited
+    repeatedly reported five problems and five things to fix."""
+    server = LawServer(*load_corpus(None))
+    report = server.check_citations(
+        {
+            "text": "Under section 999 PPC; see s.999 PPC again; and section 999 of the "
+            "Pakistan Penal Code.",
+            "as_of": "2026-01-01",
+        }
+    )
+    # Every occurrence is still reported, with its offset, because an editor has
+    # to find each one.
+    assert len(report["citations"]) == 3
+    assert report["problems"] == 3
+    assert report["distinct_problems"] == 1
+    assert report["distinct_citations"] == 1
