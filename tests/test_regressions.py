@@ -290,3 +290,136 @@ def test_many_citations_are_linear():
     assert time.perf_counter() - started < 5
     assert report["total"] == 10_000 and len(report["citations"]) == 500
     assert report["counts"] == {"in_force": 10_000}
+
+
+# --- second independent review -------------------------------------------------------
+#
+# Four of these were answers that looked right and were not: a question the corpus could
+# answer being refused, and a foreign Act being certified as Pakistani law in force.
+
+
+@pytest.mark.parametrize(
+    "question,citation",
+    [
+        # The vocabulary gap: the question nominalises ("punishment") what the statute
+        # conjugates ("punished"), and names the offence in English where the statute
+        # names it in Urdu. Both provisions are present and both questions were refused.
+        ("What is the punishment for murder?", "Section 302 PPC"),
+        ("punishment for qatl-i-amd", "Section 302 PPC"),
+        ("What is the punishment for homicide?", "Section 302 PPC"),
+    ],
+)
+def test_statute_vocabulary_is_bridged(question, citation):
+    server = LawServer(*load_corpus(None))
+    answer = server.answer_question({"question": question, "as_of": "2026-01-01"})
+    assert not answer["refused"], answer["refusal_reason"]
+    assert answer["passages"][0]["citation"] == citation
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # ...and the bridge must not become a licence to answer anything. Each of these
+        # shares exactly one content word with s.302 ("punishment"), and answering any
+        # of them with the murder provision is the failure this repo exists to prevent.
+        "What is the punishment for cryptocurrency?",
+        "punishment for trespass",
+        "punishment for blasphemy",
+        "punishment for insider trading",
+    ],
+)
+def test_one_shared_word_is_still_too_weak(question):
+    server = LawServer(*load_corpus(None))
+    answer = server.answer_question({"question": question, "as_of": "2026-01-01"})
+    assert answer["refused"]
+    assert answer["passages"] == []
+
+
+def test_a_foreign_act_is_not_certified_as_pakistani_law():
+    """A foreign code was reported as Section 302 PPC, in force.
+
+    The parser saw no Act it recognised, which looked identical to no Act being named,
+    so `default_statute` was applied and the audit returned `all_in_force` with zero
+    problems. The `raw` field said "Section 302", so the trail did not show it either.
+    """
+    server = LawServer(*load_corpus(None))
+    report = server.check_citations(
+        {
+            "text": "Section 302 of the Indian Penal Code governs.",
+            "as_of": "2026-01-01",
+            "default_statute": "PPC",
+        }
+    )
+    assert report["verdict"] == "problems"
+    (entry,) = report["citations"]
+    assert entry["status"] == "act_not_recognised"
+    assert "Indian Penal Code" in entry["note"]
+
+
+def test_a_named_act_blocks_the_default_but_a_bare_section_does_not():
+    """The default statute is a real feature; it must survive the fix above."""
+    server = LawServer(*load_corpus(None))
+    report = server.check_citations(
+        {
+            "text": "Under section 302, the accused is liable.",
+            "as_of": "2026-01-01",
+            "default_statute": "PPC",
+        }
+    )
+    assert report["verdict"] == "all_in_force"
+    assert report["citations"][0]["citation"] == "Section 302 PPC"
+
+
+def test_an_unknown_act_is_parsed_but_left_unresolved():
+    (citation,) = parse("Section 302 of the Indian Penal Code")
+    assert citation.statute == ""
+    assert citation.named_statute == "Indian Penal Code"
+
+
+@pytest.mark.parametrize(
+    "text,provisions",
+    [
+        # A range was one citation, and the Act after it was thrown away: a charge sheet
+        # under ss.302-304 PPC was audited as a single section.
+        ("ss. 302-304 PPC", ["302", "303", "304"]),
+        ("sections 10 to 14 PPC", ["10", "11", "12", "13", "14"]),
+        ("sections 302, 324-326 PPC", ["302", "324", "325", "326"]),
+        # The letter forms are not ranges.
+        ("section 489-F PPC", ["489F"]),
+        ("section 354-A PPC", ["354A"]),
+        # A span this wide is a mis-parse far more often than a citation, so the
+        # endpoints are reported rather than five hundred sections.
+        ("sections 1-500 PPC", ["1", "500"]),
+    ],
+)
+def test_section_ranges_are_expanded(text, provisions):
+    citations = parse(text)
+    assert [c.provision for c in citations] == provisions
+    assert {c.statute for c in citations} == {"PPC"}
+
+
+@pytest.mark.parametrize(
+    "text", ["Chapter 5 PPC", "Part 3 PPC", "Schedule 2 PECA", "In chapter 5 PPC the offence"]
+)
+def test_a_division_of_an_act_is_not_read_as_a_section(text):
+    """A chapter is not a section: "Chapter 5 PPC" was reported as "Section 5 PPC"."""
+    assert parse(text) == []
+
+
+@pytest.mark.parametrize(
+    "text,court",
+    [
+        # PLD reports the High Courts constantly, and a bench name in full made the
+        # whole citation vanish — so a draft of High Court authority audited as
+        # containing no citations at all.
+        ("PLD 2015 Lahore 401", "LAHORE"),
+        ("PLD 2015 Karachi 88", "KARACHI"),
+        ("2021 YLR Peshawar 55", "PESHAWAR"),
+        ("PLD 2018 Islamabad 7", "ISLAMABAD"),
+        ("PLD 2019 SC 1", "SC"),
+    ],
+)
+def test_reported_citations_outside_the_supreme_court_are_found(text, court):
+    (citation,) = parse(text)
+    assert citation.kind == "reported"
+    assert citation.court == court

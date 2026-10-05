@@ -28,6 +28,10 @@ UNKNOWN = "unknown_provision"  # statute loaded, provision absent
 NO_ACT = "no_act_named"  # "section 9" — of what?
 NOT_LOADED = "statute_not_loaded"  # the corpus cannot say anything either way
 NOT_CHECKED = "not_checkable"  # case law and SROs: not what this corpus holds
+# An Act was named and is not one this corpus knows - "the Indian Penal Code". Its own
+# status, because reading it as "no Act named" is how a foreign provision ends up
+# attributed to a Pakistani one with the same number.
+FOREIGN_ACT = "act_not_recognised"
 # Dated before the corpus's record of the statute begins: it may well have been in force.
 BEFORE_RECORD = "before_record"
 IN_FORCE = "in_force"
@@ -36,7 +40,7 @@ IN_FORCE = "in_force"
 # valid section and states the 2022 penalty.
 AMENDED_SINCE = "amended_since"
 
-PROBLEMS = (REPEALED, NOT_YET, UNKNOWN, NO_ACT)
+PROBLEMS = (REPEALED, NOT_YET, UNKNOWN, NO_ACT, FOREIGN_ACT)
 REVIEW = (AMENDED_SINCE,)
 UNVERIFIED = (NOT_LOADED, NOT_CHECKED, BEFORE_RECORD)
 
@@ -63,7 +67,15 @@ def check_citations(
     results: list[dict] = []
 
     for offset, citation in locate(text, statutes=statute_aliases(loaded)):
-        if default_statute and citation.kind == "statutory" and not citation.statute:
+        if (
+            default_statute
+            and citation.kind == "statutory"
+            and not citation.statute
+            # Never over an Act the text named. "Section 302 of the Indian Penal Code"
+            # with a PPC default would otherwise be certified as good Pakistani law,
+            # and the note would say PPC while the draft said Indian.
+            and not citation.named_statute
+        ):
             citation = Citation(**{**citation.__dict__, "statute": default_statute})
         # Where it is, so a reader or an editor can go straight to it.
         results.append(_check_one(corpus, citation, date, loaded) | {"offset": offset})
@@ -103,6 +115,12 @@ def _check_one(corpus: Corpus, c: Citation, date: dt.date, loaded: set[str]) -> 
         what = "case law" if c.kind == "reported" else "subordinate legislation"
         return entry | {"status": NOT_CHECKED, "note": f"{what} is not held in this corpus"}
     if not c.statute:
+        if c.named_statute:
+            return entry | {
+                "status": FOREIGN_ACT,
+                "note": f"the text names {c.named_statute!r}, which is not an Act this "
+                "corpus knows; it was not read as a Pakistani provision of the same number",
+            }
         return entry | {
             "status": NO_ACT,
             "note": "no Act named; the provision cannot be checked until one is",

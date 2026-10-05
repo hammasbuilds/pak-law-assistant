@@ -23,6 +23,7 @@ from paklaw.mcp_server import (
     PARSE_ERROR,
     PROTOCOL_VERSIONS,
     SAMPLE_WARNING,
+    TOOLS,
     LawServer,
     load_corpus,
     serve,
@@ -505,3 +506,99 @@ def test_a_commencement_is_not_attributed_to_the_instrument_that_ended_it():
         ("2016-08-19", "commenced"): None,
         ("2022-02-20", "substituted"): "Ordinance II of 2022",
     }
+
+
+def _check_against_schema(value, schema, path="structuredContent"):
+    """Enough of JSON Schema to prove the declared shape is the shape returned.
+
+    Written out rather than imported: the package has no dependencies, and a schema
+    nobody validates is a claim rather than a contract.
+    """
+    kinds = schema.get("type")
+    kinds = [kinds] if isinstance(kinds, str) else list(kinds or [])
+    python = {
+        "object": dict,
+        "array": list,
+        "string": str,
+        "integer": int,
+        "number": (int, float),
+        "boolean": bool,
+        "null": type(None),
+    }
+    if kinds:
+        # bool is an int in Python, so an integer field must not accept True.
+        if isinstance(value, bool) and "boolean" not in kinds:
+            raise AssertionError(f"{path}: boolean where {kinds} was declared")
+        allowed = tuple(python[k] for k in kinds if k in python)
+        assert isinstance(value, allowed), f"{path}: {type(value).__name__} not in {kinds}"
+    if "enum" in schema and value is not None:
+        assert value in schema["enum"], f"{path}: {value!r} not in {schema['enum']}"
+    if isinstance(value, dict):
+        for key in schema.get("required", []):
+            assert key in value, f"{path}: required key {key!r} missing"
+        properties = schema.get("properties", {})
+        for key, item in value.items():
+            if key in properties:
+                _check_against_schema(item, properties[key], f"{path}.{key}")
+            elif isinstance(schema.get("additionalProperties"), dict):
+                _check_against_schema(item, schema["additionalProperties"], f"{path}.{key}")
+    if isinstance(value, list) and isinstance(schema.get("items"), dict):
+        for index, item in enumerate(value):
+            _check_against_schema(item, schema["items"], f"{path}[{index}]")
+
+
+# Every path a tool can take, including the refusals: an outputSchema that only holds
+# for the happy case is worse than none, because a client validating against it rejects
+# a perfectly good refusal.
+_OUTPUT_CASES = [
+    ("answer_question", {"question": "punishment for murder", "as_of": "2026-01-01"}),
+    ("answer_question", {"question": "cryptocurrency licensing", "as_of": "2026-01-01"}),
+    ("answer_question", {"question": "section 20 PECA", "as_of": "2010-01-01"}),
+    ("answer_question", {"question": "section 999 PPC", "as_of": "2026-01-01"}),
+    ("check_citations", {"text": "section 20 PECA and section 302 PPC", "as_of": "2026-01-01"}),
+    ("check_citations", {"text": "nothing cited here", "as_of": "2026-01-01"}),
+    (
+        "check_citations",
+        {
+            "text": "section 302 of the Indian Penal Code",
+            "as_of": "2026-01-01",
+            "default_statute": "PPC",
+        },
+    ),
+    ("provision_history", {"citation": "section 20 PECA"}),
+    ("provision_history", {"citation": "section 20 PECA", "with_text": True}),
+    ("provision_history", {"citation": "section 999 PECA"}),
+    (
+        "compare_versions",
+        {"citation": "section 20 PECA", "before": "2018-01-01", "after": "2026-01-01"},
+    ),
+    (
+        "compare_versions",
+        {"citation": "section 20 PECA", "before": "1990-01-01", "after": "1991-01-01"},
+    ),
+    (
+        "compare_versions",
+        {"citation": "section 999 PECA", "before": "2018-01-01", "after": "2026-01-01"},
+    ),
+    ("list_provisions", {"statute": "PECA", "as_of": "2026-01-01"}),
+    ("list_provisions", {"statute": "PECA", "as_of": "1990-01-01"}),
+    ("changes_between", {"start": "2015-01-01", "end": "2026-01-01"}),
+    ("changes_between", {"start": "2024-01-01", "end": "2024-02-01"}),
+    ("parse_citations", {"text": "ss. 302-304 PPC and PLD 2015 Lahore 401"}),
+    ("parse_citations", {"text": "nothing"}),
+    ("corpus_info", {}),
+]
+
+
+@pytest.mark.parametrize("name,arguments", _OUTPUT_CASES)
+def test_structured_output_matches_the_declared_output_schema(name, arguments):
+    schemas = {t["name"]: t.get("outputSchema") for t in TOOLS}
+    schema = schemas[name]
+    assert schema is not None, f"{name} returns structuredContent but declares no outputSchema"
+    server = LawServer(*load_corpus(None))
+    _check_against_schema(getattr(server, name)(arguments), schema)
+
+
+def test_every_tool_declares_an_output_schema():
+    missing = [t["name"] for t in TOOLS if "outputSchema" not in t]
+    assert missing == []

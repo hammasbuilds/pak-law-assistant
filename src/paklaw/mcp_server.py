@@ -112,8 +112,46 @@ _STATUTE = {
 _READ_ONLY = {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False}
 
 
-def _tool(name: str, title: str, description: str, properties: dict, required: list) -> dict:
-    return {
+# Every result carries this when the corpus is the demonstration sample, and nothing
+# when it is a real one - so it is declared and never required.
+_CORPUS_WARNING = {
+    "type": "string",
+    "description": "Present only when the loaded corpus is the demonstration sample.",
+}
+# Paging. `total` is the whole result; `next_offset` appears only while more remains, so
+# a page without it is the last page and not the whole answer.
+_PAGING = {
+    "total": {"type": "integer", "description": "Size of the whole result, not this page."},
+    "next_offset": {
+        "type": "integer",
+        "description": "Offset of the next page. Absent on the last page.",
+    },
+}
+_REFUSAL = {
+    "refused": {"type": "boolean"},
+    "refusal_reason": {
+        "type": ["string", "null"],
+        "description": "Why no answer is given. A refusal is an answer; it is not an error.",
+    },
+}
+
+
+def _tool(
+    name: str,
+    title: str,
+    description: str,
+    properties: dict,
+    required: list,
+    output: dict | None = None,
+    output_required: list | None = None,
+) -> dict:
+    """One tool. `output` describes `structuredContent`, which every tool here returns.
+
+    Declared because a client that is handed structured results and no schema for them
+    has to guess, and `additionalProperties` is left open: a corpus with richer metadata
+    adds keys, and a client must not reject a result for carrying more than this.
+    """
+    tool = {
         "name": name,
         "title": title,
         "description": description,
@@ -125,7 +163,57 @@ def _tool(name: str, title: str, description: str, properties: dict, required: l
         },
         "annotations": _READ_ONLY,
     }
+    if output is not None:
+        tool["outputSchema"] = {
+            "type": "object",
+            "properties": {"corpus_warning": _CORPUS_WARNING, **output},
+            # Only keys present on every path, refusals included.
+            "required": output_required if output_required is not None else sorted(output),
+        }
+    return tool
 
+
+_PASSAGE = {
+    "type": "object",
+    "properties": {
+        "citation": {"type": "string"},
+        "heading": {"type": ["string", "null"]},
+        "text": {"type": "string", "description": "The provision's words, as recorded."},
+        "statute": {"type": "string"},
+        "in_force_from": {"type": "string"},
+        "in_force_to": {
+            "type": ["string", "null"],
+            "description": "Null while still in force.",
+        },
+        "status_note": {"type": ["string", "null"]},
+        "matched": {"type": ["string", "null"], "description": "Why this one was returned."},
+        "score": {"type": ["number", "null"]},
+    },
+    "required": ["citation", "text", "statute", "in_force_from"],
+}
+_VERSION = {
+    "type": "object",
+    "properties": {
+        "from": {"type": "string"},
+        "to": {"type": ["string", "null"]},
+        "manner": {"type": ["string", "null"], "description": "substituted, repealed, omitted."},
+        "amended_by": {"type": ["string", "null"]},
+        "heading": {"type": ["string", "null"]},
+        "text": {"type": "string", "description": "Only when with_text was true."},
+    },
+    "required": ["from"],
+}
+_SIDE = {
+    "type": "object",
+    "properties": {
+        "date": {"type": "string"},
+        "in_force": {"type": "boolean"},
+        "in_force_from": {"type": "string"},
+        "in_force_to": {"type": ["string", "null"]},
+        "text": {"type": "string"},
+    },
+    "required": ["date", "in_force"],
+}
 
 TOOLS: list[dict[str, Any]] = [
     _tool(
@@ -153,6 +241,32 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
         ["question", "as_of"],
+        output={
+            "question": {"type": "string"},
+            "as_of": {"type": "string"},
+            **_REFUSAL,
+            "passages": {"type": "array", "items": _PASSAGE},
+            "superseded": {
+                "type": "array",
+                "description": "Cited provisions not in force on that date, with their "
+                "full version history - the reason the answer was refused.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "citation": {"type": "string"},
+                        "status": {"type": "string"},
+                        "history": {"type": "array", "items": _VERSION},
+                    },
+                    "required": ["citation"],
+                },
+            },
+            "warnings": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Coverage limits that bear on this answer, such as a "
+                "statute the question named that the corpus does not hold.",
+            },
+        },
     ),
     _tool(
         "check_citations",
@@ -161,7 +275,9 @@ TOOLS: list[dict[str, Any]] = [
         "not good law on a date. Each citation gets a status: in_force, amended_since (good "
         "law on the date but amended later, so check the draft quotes the older words), "
         "not_in_force (repealed or substituted), not_yet_in_force, unknown_provision, "
-        "no_act_named, "
+        "no_act_named, act_not_recognised (the text named an Act this corpus does not "
+        "know, such as a foreign code — it is NOT read as the Pakistani provision of the "
+        "same number), "
         "statute_not_loaded, not_checkable (case law, SROs) or before_record (dated before the "
         "corpus starts recording that statute). The verdict is problems, review, "
         "unverified, or 'all_in_force' only when every citation was checked and passed. "
@@ -177,6 +293,52 @@ TOOLS: list[dict[str, Any]] = [
             "offset": {"type": "integer", "minimum": 0, "description": "Default 0."},
         },
         ["text", "as_of"],
+        output={
+            "as_of": {"type": "string"},
+            "citations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "citation": {"type": "string"},
+                        "raw": {"type": "string", "description": "As written in the draft."},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["statutory", "subordinate", "reported"],
+                        },
+                        "status": {"type": "string"},
+                        "note": {"type": "string"},
+                        "heading": {"type": ["string", "null"]},
+                        "offset": {"type": "integer", "description": "Character offset."},
+                    },
+                    "required": ["citation", "kind", "status"],
+                },
+            },
+            "counts": {
+                "type": "object",
+                "description": "How many citations got each status.",
+                "additionalProperties": {"type": "integer"},
+            },
+            "problems": {"type": "integer"},
+            "review": {"type": "integer"},
+            "unverified": {"type": "integer"},
+            "verdict": {
+                "type": "string",
+                "enum": ["problems", "review", "unverified", "all_in_force"],
+                "description": "all_in_force only when every citation was checked and passed.",
+            },
+            **_PAGING,
+        },
+        output_required=[
+            "as_of",
+            "citations",
+            "counts",
+            "problems",
+            "review",
+            "total",
+            "unverified",
+            "verdict",
+        ],
     ),
     _tool(
         "provision_history",
@@ -197,6 +359,14 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
         ["citation"],
+        output={
+            "citation": {"type": "string"},
+            **_REFUSAL,
+            "versions": {"type": "integer"},
+            "currently_in_force": {"type": "boolean"},
+            "history": {"type": "array", "items": _VERSION, "description": "Oldest first."},
+        },
+        output_required=["citation", "refused"],
     ),
     _tool(
         "compare_versions",
@@ -211,6 +381,30 @@ TOOLS: list[dict[str, Any]] = [
             "statute": {**_STATUTE, "description": "The Act, if the citation omits it."},
         },
         ["citation", "before", "after"],
+        output={
+            "citation": {"type": "string"},
+            **_REFUSAL,
+            "before": _SIDE,
+            "after": _SIDE,
+            "changes": {
+                "type": "array",
+                "description": "Word-level differences. Absent when the provision was "
+                "not in force on both dates, so there is nothing to compare.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "change": {"type": "string", "enum": ["added", "removed", "replaced"]},
+                        "before": {"type": ["string", "null"]},
+                        "after": {"type": ["string", "null"]},
+                    },
+                    "required": ["change"],
+                },
+            },
+            "amended_by": {"type": "array", "items": {"type": "string"}},
+            "versions_between": {"type": "integer"},
+            "summary": {"type": "string"},
+        },
+        output_required=["refused"],
     ),
     _tool(
         "list_provisions",
@@ -224,6 +418,40 @@ TOOLS: list[dict[str, Any]] = [
             "offset": {"type": "integer", "minimum": 0, "description": "Default 0."},
         },
         ["statute", "as_of"],
+        output={
+            "statute": {"type": "string"},
+            "as_of": {"type": "string"},
+            "in_force": {"type": "integer"},
+            "not_in_force_on_this_date": {
+                "type": "integer",
+                "description": "Provisions of this statute that exist but were not in "
+                "force on that date, and so are not listed.",
+            },
+            "provisions": {
+                "type": "array",
+                "description": "In statute order.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "citation": {"type": "string"},
+                        "heading": {"type": ["string", "null"]},
+                        "chapter": {"type": ["string", "null"]},
+                        "in_force_from": {"type": "string"},
+                        "amended": {"type": "boolean"},
+                    },
+                    "required": ["citation", "in_force_from"],
+                },
+            },
+            **_PAGING,
+        },
+        output_required=[
+            "as_of",
+            "in_force",
+            "not_in_force_on_this_date",
+            "provisions",
+            "statute",
+            "total",
+        ],
     ),
     _tool(
         "changes_between",
@@ -238,6 +466,29 @@ TOOLS: list[dict[str, Any]] = [
             "offset": {"type": "integer", "minimum": 0, "description": "Default 0."},
         },
         ["start", "end"],
+        output={
+            "from": {"type": "string"},
+            "to": {"type": "string", "description": "Reversed dates are normalised."},
+            "statute": {"type": ["string", "null"], "description": "Null means all loaded."},
+            "events": {
+                "type": "array",
+                "description": "Oldest first. A substitution is one event, not a repeal "
+                "and an unrelated commencement.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "date": {"type": "string"},
+                        "citation": {"type": "string"},
+                        "event": {"type": "string"},
+                        "by": {"type": ["string", "null"]},
+                        "heading": {"type": ["string", "null"]},
+                    },
+                    "required": ["date", "citation", "event"],
+                },
+            },
+            **_PAGING,
+        },
+        output_required=["events", "from", "statute", "to", "total"],
     ),
     _tool(
         "parse_citations",
@@ -257,6 +508,35 @@ TOOLS: list[dict[str, Any]] = [
             "offset": {"type": "integer", "minimum": 0, "description": "Default 0."},
         },
         ["text"],
+        output={
+            "citations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "citation": {"type": "string"},
+                        "key": {"type": "string", "description": "Canonical identity."},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["statutory", "subordinate", "reported"],
+                        },
+                        "raw": {"type": "string"},
+                        "statute": {"type": "string"},
+                        "named_statute": {
+                            "type": "string",
+                            "description": "An Act the text named that is not one this "
+                            "module knows. Empty when no Act was named - the two are "
+                            "different, and only the second may take a default statute.",
+                        },
+                        "in_corpus": {"type": "boolean"},
+                    },
+                    "required": ["citation", "kind"],
+                },
+            },
+            "count": {"type": "integer", "description": "Citations on this page."},
+            **_PAGING,
+        },
+        output_required=["citations", "count", "total"],
     ),
     _tool(
         "corpus_info",
@@ -266,6 +546,52 @@ TOOLS: list[dict[str, Any]] = [
         "not listed here cannot be answered from.",
         {},
         [],
+        output={
+            "source": {"type": "string", "description": "'sample' or the corpus path."},
+            "sample": {
+                "type": "boolean",
+                "description": "True means three demonstration provisions, not the "
+                "statute book. Nothing from it should be relied on.",
+            },
+            "provisions": {"type": "integer"},
+            "versions": {"type": "integer"},
+            "statutes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "statute": {"type": "string"},
+                        "provisions": {"type": "integer"},
+                        "versions": {"type": "integer"},
+                        "currently_in_force": {"type": "integer"},
+                    },
+                    "required": ["statute", "provisions", "versions"],
+                },
+            },
+            "earliest": {"type": ["string", "null"]},
+            "latest_change": {"type": ["string", "null"]},
+            "as_at": {
+                "type": ["string", "null"],
+                "description": "The date the corpus was compiled, when it records one. "
+                "Anything after it is not in the corpus.",
+            },
+            "recorded_from": {
+                "type": "object",
+                "description": "Per statute, the date from which amendments are recorded.",
+                "additionalProperties": {"type": "string"},
+            },
+        },
+        output_required=[
+            "as_at",
+            "earliest",
+            "latest_change",
+            "provisions",
+            "recorded_from",
+            "sample",
+            "source",
+            "statutes",
+            "versions",
+        ],
     ),
 ]
 

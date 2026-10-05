@@ -117,6 +117,74 @@ LEGAL_STOPWORDS = {
 }
 
 
+# Pakistani statutes name offences in Urdu and Arabic terms of art, so the word a person
+# asks with is frequently not the word the statute uses: a question about *murder* has to
+# reach "qatl-i-amd", and one about *theft* has to reach "chori". Without this bridge the
+# weak-match refusal fires on perfectly answerable questions - the nearest provision is
+# right there, and the only thing missing is the vocabulary.
+#
+# This maps vocabulary, never meaning. Each entry is a term the statute book itself uses
+# for the concept the English word names; nothing here broadens a provision's scope, and
+# no entry is a near-synonym or a paraphrase. A wrong entry would cite the wrong offence,
+# so the table stays small and every line has to be defensible from the statute's own
+# wording.
+STATUTE_VOCABULARY: dict[str, tuple[str, ...]] = {
+    "murder": ("qatl", "amd"),
+    "homicide": ("qatl",),
+    "manslaughter": ("qatl", "khata"),
+    "theft": ("chori",),
+    "robbery": ("haraabah",),
+    "adultery": ("zina",),
+    "retaliation": ("qisas",),
+    "bloodmoney": ("diyat",),
+    "blood": ("diyat",),
+    "discretionary": ("tazir",),
+    "hurt": ("jurh",),
+    "defamation": ("qazf",),
+    "intoxication": ("hadd",),
+}
+# Read the other way too, so a question in the statute's own terms still finds the
+# English wording of a heading.
+_VOCABULARY_REVERSE: dict[str, tuple[str, ...]] = {}
+for _english, _terms in STATUTE_VOCABULARY.items():
+    for _term in _terms:
+        _VOCABULARY_REVERSE.setdefault(_term, ())
+        _VOCABULARY_REVERSE[_term] += (_english,)
+
+# Conservative English suffixes. "punishment" must reach "punished", which is the single
+# most common mismatch in a penal code: the question nominalises what the statute
+# conjugates. Only applied to ASCII words long enough that the stem stays a word.
+_SUFFIXES = ("ments", "ment", "ingly", "ing", "edly", "ed", "es", "s")
+
+
+def _stems(term: str) -> set[str]:
+    """`term` and the stems it could share with a differently inflected form."""
+    out = {term}
+    if not term.isascii() or not term.isalpha():
+        return out
+    for suffix in _SUFFIXES:
+        if term.endswith(suffix) and len(term) - len(suffix) >= 4:
+            out.add(term[: -len(suffix)])
+            break
+    return out
+
+
+def expand(term: str) -> set[str]:
+    """Every form of `term` that counts as the same term when matching a provision.
+
+    Query-side only: the index keeps the statute's own words, so `Hit.matched_terms` is
+    still keyed by what the person actually asked and `why()` stays readable.
+    """
+    forms = _stems(term)
+    for related in STATUTE_VOCABULARY.get(term, ()) + _VOCABULARY_REVERSE.get(term, ()):
+        forms |= _stems(related)
+    # A stem of the asked word may itself be a vocabulary key ("murders" -> "murder").
+    for stem in list(forms):
+        for related in STATUTE_VOCABULARY.get(stem, ()) + _VOCABULARY_REVERSE.get(stem, ()):
+            forms |= _stems(related)
+    return forms
+
+
 def tokenise(text: str, *, keep_stopwords: bool = False) -> list[str]:
     """Words, lowercased. Urdu script is preserved as its own tokens.
 
@@ -163,12 +231,16 @@ class BM25Index:
     _frequencies: list[Counter] = field(default_factory=list)
     _document_frequency: Counter = field(default_factory=Counter)
     _average_length: float = 0.0
+    # stem -> the statute's own words that reduce to it, so a query term can find the
+    # inflection the statute actually used without the index losing that word.
+    _by_stem: dict[str, set[str]] = field(default_factory=dict)
 
     def fit(self, provisions: Sequence[Provision]) -> BM25Index:
         self.documents = list(provisions)
         self._tokens = []
         self._frequencies = []
         self._document_frequency = Counter()
+        self._by_stem = {}
 
         for provision in self.documents:
             tokens = (
@@ -182,10 +254,20 @@ class BM25Index:
             frequencies = Counter(tokens)
             self._frequencies.append(frequencies)
             self._document_frequency.update(frequencies.keys())
+            for token in frequencies:
+                for stem in _stems(token):
+                    self._by_stem.setdefault(stem, set()).add(token)
 
         lengths = [len(t) for t in self._tokens]
         self._average_length = sum(lengths) / len(lengths) if lengths else 0.0
         return self
+
+    def _forms(self, term: str) -> set[str]:
+        """Index terms that count as `term`: itself, its inflections, its statute word."""
+        forms = {term}
+        for stem in expand(term):
+            forms |= self._by_stem.get(stem, set())
+        return forms
 
     def _idf(self, term: str) -> float:
         n = len(self.documents)
@@ -219,16 +301,24 @@ class BM25Index:
             matched: dict[str, float] = {}
 
             for term in set(terms):
-                frequency = frequencies.get(term, 0)
-                if not frequency:
+                # The term as asked, plus the statute's own wording for it. Scored on
+                # the best single form rather than the sum, so a word that happens to
+                # have several inflections in one provision does not outweigh a word
+                # that appears once.
+                best = 0.0
+                for form in self._forms(term):
+                    frequency = frequencies.get(form, 0)
+                    if not frequency:
+                        continue
+                    idf = self._idf(form)
+                    denominator = frequency + self.k1 * (
+                        1 - self.b + self.b * length / (self._average_length or 1)
+                    )
+                    best = max(best, idf * frequency * (self.k1 + 1) / denominator)
+                if not best:
                     continue
-                idf = self._idf(term)
-                denominator = frequency + self.k1 * (
-                    1 - self.b + self.b * length / (self._average_length or 1)
-                )
-                contribution = idf * frequency * (self.k1 + 1) / denominator
-                score += contribution
-                matched[term] = round(contribution, 4)
+                score += best
+                matched[term] = round(best, 4)
 
             if score > 0:
                 missing = sorted(set(terms) - set(matched))

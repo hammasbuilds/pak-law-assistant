@@ -94,12 +94,61 @@ _NUMBER = r"\d{1,4}(?!\d)(?:-?[A-Z]{1,3}(?![a-z]))?(?:\(\d{1,3}[A-Z]?\))*(?:\([a
 # Later members of a list — "sections 302/34", "302, 34 and 109". At most three digits, so
 # "section 20, 2016" does not read the year as a second section.
 _LIST_MEMBER = r"\d{1,3}(?!\d)(?:-?[A-Z]{1,3}(?![a-z]))?(?:\(\d{1,3}[A-Z]?\))*(?:\([a-z]{1,4}\))?"
-_LIST = rf"{_NUMBER}(?:\s*(?:/|,|&|\band\b)\s*{_LIST_MEMBER})*"
+# "ss. 302-304", "sections 10 to 14". Written as an optional tail on a number rather
+# than as an alternative to one: an alternation would make the engine attempt a range at
+# every number in a list and backtrack out of it, and a charge sheet with ten thousand
+# citations is a real input here. The tail must start with a digit, so the letter forms
+# ("489-F", "354-A") are consumed by _NUMBER and never read as a range.
+_RANGE_TAIL = rf"\s*(?:-|–|—|\bto\b)\s*{_LIST_MEMBER}"
+_SPAN = rf"{_NUMBER}(?:{_RANGE_TAIL})?"
+_LIST_SPAN = rf"{_LIST_MEMBER}(?:{_RANGE_TAIL})?"
+_LIST = rf"{_SPAN}(?:\s*(?:/|,|&|\band\b)\s*{_LIST_SPAN})*"
 _MEMBER = re.compile(_NUMBER, re.I)
+_RANGE_MEMBER = re.compile(rf"(?P<one>{_NUMBER})(?P<tail>{_RANGE_TAIL})?", re.I)
+# A charge sheet cites a handful of consecutive sections; a hundred is a drafting error
+# or a mis-parse, and expanding it would bury the real citations.
+_RANGE_LIMIT = 50
+
+
+def members(numbers: str) -> list[str]:
+    """Every provision number a citation's number list names, ranges expanded.
+
+    "302-304" is three sections, and reporting one of them means an audit passes a draft
+    whose other two citations were never checked. A range wider than `_RANGE_LIMIT` is
+    reported as its endpoints rather than expanded, because at that width it is far more
+    likely to be a mis-parse than a citation.
+    """
+    out: list[str] = []
+    for match in _RANGE_MEMBER.finditer(numbers or ""):
+        first = match.group("one")
+        tail = match.group("tail")
+        if not tail:
+            out.append(first)
+            continue
+        last = _MEMBER.search(tail).group(0)
+        if first.isdigit() and last.isdigit() and 0 <= int(last) - int(first) <= _RANGE_LIMIT:
+            out.extend(str(n) for n in range(int(first), int(last) + 1))
+        else:
+            out.extend([first, last])
+    return out
+
 
 # A letter immediately before the marker means it is the end of a word: "Rs. 500",
 # "Part 3", "chart 5". None of those is a citation.
 _NOT_AFTER_LETTER = r"(?<![A-Za-z])"
+
+# An Act title this module does not know: up to five capitalised words ending in the
+# noun Acts are named with. "Indian Penal Code", "Companies Act", "Qanun-e-Shahadat
+# Order". Not a statute key - the point is only to notice that one was named.
+_ACT_TITLE = r"(?-i:(?:[A-Z][\w.'\-]*\s+){1,5}(?:Code|Act|Ordinance|Order|Rules|Regulations))"
+
+# Divisions of an Act that are not provisions. The bare pattern would otherwise read
+# "Chapter 5 PPC" as section 5 of the PPC, which is a different thing that exists.
+_NOT_A_PROVISION = re.compile(
+    r"(?:chapter|part|schedule|sched\.?|clause|paragraph|para\.?|proviso|table|form|entry|"
+    r"item|preamble|division)\s*$",
+    re.I,
+)
 
 
 # Urdu text writes numbers in Extended Arabic-Indic (۳۰۲) or Arabic-Indic (٣٠٢) digits;
@@ -135,7 +184,15 @@ def _patterns(extra: tuple[str, ...] = ()) -> tuple[re.Pattern, re.Pattern, re.P
     without them, "section 5 PRPA" parses as a bare "section 5" of no Act.
     """
     names = _names(extra)
-    statute = r"(?:\s*,?\s*(?:of\s+the\s+|of\s+)?(?P<statute>" + names + r")(?![A-Za-z]))?"
+    # A known Act first; failing that, any Act-like title. Capturing the second is what
+    # lets a citation say "an Act was named and I do not know it", which is a different
+    # thing from naming no Act at all - and the difference decides whether a default
+    # statute may be applied. Case-sensitive, because an Act title is capitalised and
+    # "under the code" is not one.
+    statute = (
+        r"(?:\s*,?\s*(?:of\s+the\s+|of\s+)?(?P<statute>" + names + r")(?![A-Za-z])"
+        r"|\s*,?\s*(?:of\s+)?(?:the\s+)?(?P<unknown_statute>" + _ACT_TITLE + r")(?![A-Za-z]))?"
+    )
     section = re.compile(
         _NOT_AFTER_LETTER
         + r"(?:sections?|secs?\.?|ss?\.|§§?|u/ss?\.?|daf(?:a|ah|fa)|دفعہ|دفعات)\s*(?P<numbers>"
@@ -186,14 +243,49 @@ _SRO = re.compile(
     re.I,
 )
 
+# Benches as they are printed in a citation, abbreviated and in full. PLD reports the
+# High Courts far more often than the Supreme Court, and a court name the pattern did
+# not know used to make the whole citation vanish - so a draft full of High Court
+# authority was reported as containing no citations at all.
+_COURTS = (
+    "SC",
+    "LHC",
+    "SHC",
+    "PHC",
+    "BHC",
+    "IHC",
+    "FSC",
+    "Lah",
+    "Lahore",
+    "Kar",
+    "Karachi",
+    "Pesh",
+    "Peshawar",
+    "Quetta",
+    "Islamabad",
+    "Sindh",
+    "Balochistan",
+    "Baluchistan",
+    "Shariat",
+    r"AJ&K",
+    "AJK",
+    "Gilgit",
+    "Trib",
+    "Tribunal",
+)
+# Longest first, so "Lahore" is not matched as "Lah" with "ore" left over.
+_COURT = "|".join(sorted((c for c in _COURTS), key=len, reverse=True))
+
 # "PLD 2015 SC 401", "2019 SCMR 1234" - both orderings occur in practice.
 _REPORT_A = re.compile(
     r"\b(?P<report>" + "|".join(REPORTS) + r")\s+(?P<year>\d{4})\s+"
-    r"(?P<court>SC|LHC|SHC|PHC|BHC|FSC|Lah|Kar|Pesh|Quetta)?\s*(?P<page>\d+)\b"
+    r"(?P<court>" + _COURT + r")?\s*(?P<page>\d+)\b",
+    re.I,
 )
 _REPORT_B = re.compile(
     r"\b(?P<year>\d{4})\s+(?P<report>" + "|".join(REPORTS) + r")\s+"
-    r"(?P<court>SC|LHC|SHC|PHC|BHC|FSC)?\s*(?P<page>\d+)\b"
+    r"(?P<court>" + _COURT + r")?\s*(?P<page>\d+)\b",
+    re.I,
 )
 
 
@@ -203,6 +295,11 @@ class Citation:
     statute: str = ""  # canonical key, e.g. "PPC"
     provision: str = ""  # "302", "302B", "25", "XXXIX/1", "20(1)(a)"
     unit: str = ""  # "section" | "article" | "rule"
+    # An Act the text named that this module could not resolve to a key - "the Indian
+    # Penal Code". Empty when the text named no Act at all. The two cases look identical
+    # in `statute` and must not be treated alike: a default statute may be applied to
+    # the second and never to the first.
+    named_statute: str = ""
     report: str = ""
     year: str = ""
     court: str = ""
@@ -354,10 +451,20 @@ def locate(text: str, *, statutes: dict[str, str] | None = None) -> list[tuple[i
     )
     for pattern, unit, default in listed:
         for match in pattern.finditer(text):
+            # "Chapter 5 PPC" is not section 5 of the PPC. The bare pattern cannot see
+            # what precedes the number, so the division words are rejected here.
+            # Only the words immediately before it: slicing the whole preceding text
+            # here is quadratic, and a ten-thousand-citation charge sheet is a real
+            # input. The longest division word is well inside this window.
+            if pattern is bare_pattern and _NOT_A_PROVISION.search(
+                text[max(0, match.start() - 24) : match.start()]
+            ):
+                continue
             if not claim(match):
                 continue
-            statute = statute_of(match.group("statute"), default)
-            for number in _MEMBER.findall(match.group("numbers")):
+            named = match.groupdict().get("unknown_statute") or ""
+            statute = statute_of(match.group("statute"), "" if named else default)
+            for number in members(match.group("numbers")):
                 found.append(
                     (
                         match.start(),
@@ -366,6 +473,7 @@ def locate(text: str, *, statutes: dict[str, str] | None = None) -> list[tuple[i
                             statute=statute,
                             provision=normalise_number(number),
                             unit=unit,
+                            named_statute=" ".join(named.split()),
                             raw=match.group(0),
                         ),
                     )
