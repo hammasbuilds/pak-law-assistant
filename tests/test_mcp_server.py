@@ -631,6 +631,11 @@ _OUTPUT_CASES = [
     ("check_citations", {"text": "section 20(1) PECA", "as_of": "2026-01-01"}),
     ("check_citations", {"text": "section 20 PECA", "as_of": "2010-01-01"}),
     ("check_citations", {"text": "section 999 PECA and Part 3", "as_of": "2026-01-01"}),
+    # list_provisions refuses for a statute the corpus does not hold, and its status was
+    # not in the shared enum. The bidirectional check tests enums, and no case produced
+    # this one - a real JSON Schema validator over the same payloads found it, which is
+    # what the hand-rolled walker exists to approximate and does not replace.
+    ("list_provisions", {"statute": "CrPC", "as_of": "2026-01-01"}),
 ]
 
 

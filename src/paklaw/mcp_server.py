@@ -161,6 +161,7 @@ _REFUSAL = {
             "different_offence",
             "subject_not_in_corpus",
             "citation_unreliable",
+            "statute_not_loaded",
             None,
         ],
         "description": "The SAME refusal, as a token to branch on. `refusal_reason` is "
