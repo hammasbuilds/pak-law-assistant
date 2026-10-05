@@ -471,9 +471,9 @@ Run them with
   so "the meaning of animal in this Code" is refused although s.47 ("The word 'animal'
   denotes…") answers it; and a word the corpus has never seen refuses the whole question,
   so "does the word animal cover a bird?" is refused because the corpus contains no
-  *bird*, not because it contains no *animal*. Across the three question sets that is 13
-  refusals of 71 answerable questions against 1 wrong answer — roughly one in five
-  questions refused that a reader would have answered, to make a wrong citation rare. An
+  *bird*, not because it contains no *animal*. Across the three question sets that is 14
+  refusals of 71 answerable questions against 1 wrong answer — one in five questions
+  refused that a reader would have answered, to make a wrong citation rare. An
   independent review removed the rule and measured the other side: three confident wrong
   citations appeared, two of them s.302, "punished with death as qisas", for offences the
   corpus does not hold. That is the trade, and this repository chooses this side of it.

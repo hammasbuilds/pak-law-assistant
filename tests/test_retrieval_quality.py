@@ -766,3 +766,42 @@ def test_subjects_this_corpus_does_not_hold_are_still_refused(assistant):
         if not answer.refused:
             answered[question] = answer.passages[0].citation
     assert answered == {}, answered
+
+
+def test_the_readme_quotes_the_totals_these_sets_actually_produce(assistant):
+    """The Limits section states the trade with a number, and the number has to be the
+    one the sets produce. It was written as 13 and is 14, which is exactly the kind of
+    count that moves when a question is added and nobody re-reads the prose.
+    """
+    import re
+
+    right = wrong = refused = 0
+    for question, citation in ANSWERABLE + PARAPHRASES + FRESH:
+        answer = assistant.answer(question, as_of="2026-01-01")
+        if answer.refused:
+            refused += 1
+        elif answer.passages[0].citation == citation:
+            right += 1
+        else:
+            wrong += 1
+    total = len(ANSWERABLE) + len(PARAPHRASES) + len(FRESH)
+    assert right + wrong + refused == total
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    stated = re.search(
+        r"that is (\d+)\s+refusals of (\d+) answerable questions against (\d+) wrong answer",
+        readme.replace("\n  ", " "),
+    )
+    assert stated, "the README no longer states the trade"
+    assert (int(stated.group(1)), int(stated.group(2)), int(stated.group(3))) == (
+        refused,
+        total,
+        wrong,
+    )
+
+    held = sum(
+        1
+        for question in MUST_REFUSE + FRESH_MUST_REFUSE
+        if assistant.answer(question, as_of="2026-01-01").refused
+    )
+    assert held == len(MUST_REFUSE) + len(FRESH_MUST_REFUSE)
