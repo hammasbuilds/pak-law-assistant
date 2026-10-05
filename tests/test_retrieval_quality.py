@@ -555,3 +555,122 @@ def test_the_corpus_names_what_it_is_known_to_get_wrong(assistant):
     # Cached like the index, and invalidated the same way.
     before = corpus.swallowed_headings()
     assert corpus.swallowed_headings() is before
+
+
+# --- a question about another country's law -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "what is the punishment for murder under the Indian Penal Code?",
+        "what is the punishment for murder in India?",
+        "under Indian law, what is the punishment for murder?",
+        "is Islam the state religion under the Indian Constitution?",
+        "what is high treason under the Indian Constitution?",
+        "what does section 302 of the Bangladesh Penal Code say?",
+    ],
+)
+def test_an_act_this_corpus_does_not_hold_is_refused_in_prose_too(assistant, question):
+    """The citation route always refused these. The prose route answered them.
+
+    `find_statute` substring-matched "penal code" inside "Indian Penal Code", scoped
+    the search to the PPC and stripped the words that said so - discarding "Indian",
+    the only word that mattered. The result was a confident, correctly formatted,
+    warning-free citation of Pakistani law in answer to a question about another
+    country's, produced by the exact string the README uses as its example of what the
+    `act_not_recognised` refusal prevents. India matters most: its Penal Code shares
+    this one's numbering, so s.302 exists there and says something else.
+    """
+    answer = assistant.answer(question, as_of="2026-01-01")
+    assert answer.refused, [p.citation for p in answer.passages]
+    assert answer.refusal_status == "act_not_recognised"
+
+
+@pytest.mark.parametrize(
+    "question,citation",
+    [
+        ("what does the word animal mean in the Penal Code?", "Section 47 PPC"),
+        ("what is the punishment for murder under the Pakistan Penal Code?", "Section 302 PPC"),
+        ("what is the punishment for murder?", "Section 302 PPC"),
+    ],
+)
+def test_scoping_to_a_pakistani_act_still_works(assistant, question, citation):
+    """The guard must not refuse the questions the scoping exists for."""
+    answer = assistant.answer(question, as_of="2026-01-01")
+    assert not answer.refused, answer.refusal_reason
+    assert answer.passages[0].citation == citation
+
+
+# --- a citation that would name the wrong section --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "what is the limit to imprisonment for non-payment of fine?",  # s.65
+        "what is the amount of a fine where no sum is expressed?",  # s.63
+        "can a court impose simple imprisonment?",  # s.60
+    ],
+)
+def test_an_answer_from_inside_another_provision_is_not_cited(assistant, question):
+    """s.57 holds s.58 to s.66, so these were all answered "Section 57 PPC".
+
+    A warning was not enough. The reader acts on the citation, and a lawyer filing
+    "Section 57 PPC" for the fine-default rule has filed s.65. The provision is dropped
+    when its own text does not support the match, and kept - with a caveat - when it
+    does, so the question s.57 really answers is not lost with it.
+    """
+    answer = assistant.answer(question, as_of="2026-01-01")
+    assert answer.refused, [p.citation for p in answer.passages]
+    assert answer.refusal_status == "citation_unreliable"
+    assert any("wrong one" in w for w in answer.warnings), answer.warnings
+
+
+def test_the_provision_that_blob_really_is_still_answers(assistant):
+    """s.57's own first sentence is the answer to this, and dropping every malformed
+    provision outright would have lost it."""
+    answer = assistant.answer(
+        "how is imprisonment for life reckoned in fractions of punishment?", as_of="2026-01-01"
+    )
+    assert not answer.refused, answer.refusal_reason
+    assert answer.passages[0].citation == "Section 57 PPC"
+    assert any("runs on into" in w for w in answer.warnings)
+
+
+# --- what a refusal says is true -------------------------------------------------------
+
+
+def test_the_subject_refusal_does_not_assert_something_false(assistant):
+    """ "acting" is absent from the corpus; what the question is about is not.
+
+    s.52 PPC reads "…done or believed without due care and attention", so telling a
+    reader the corpus has no provision about this question was a wrong statement of
+    fact delivered with a refusal's authority. The refusal still fires - it earns its
+    keep, by ablation - but it now says what is true: the word appears in no provision.
+    """
+    answer = assistant.answer("acting without due care and attention", as_of="2026-01-01")
+    assert answer.refused
+    assert answer.refusal_status == "subject_not_in_corpus"
+    assert "'acting' appears in no provision here" in answer.refusal_reason
+    assert "has no provision about" not in answer.refusal_reason
+
+
+def test_an_adverb_does_not_veto_an_answer(assistant):
+    answer = assistant.answer("can a sentence of death never be commuted?", as_of="2026-01-01")
+    assert not answer.refused, answer.refusal_reason
+    assert answer.passages[0].citation == "Section 54 PPC"
+
+
+# --- the statute's spelling and the reader's -------------------------------------------
+
+
+@pytest.mark.parametrize("question", ["murder as tazir", "what is the tazir punishment?"])
+def test_an_apostrophe_in_a_term_of_art_is_not_a_different_word(assistant, question):
+    """The statute writes "ta'zir"; a person types "tazir". The tokeniser kept the
+    apostrophe, so they were different words - and because "tazir" is a QUALIFIER, the
+    mismatch escalated from a lower score to a hard `different_offence` refusal on a
+    question s.302(b) answers literally."""
+    answer = assistant.answer(question, as_of="2026-01-01")
+    assert not answer.refused, answer.refusal_reason
+    assert answer.passages[0].citation == "Section 302 PPC"

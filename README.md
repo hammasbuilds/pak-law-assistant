@@ -5,7 +5,7 @@
 
 <p align="center">
   <a href="#the-failure-this-exists-to-prevent">The failure it prevents</a> &middot;
-  <a href="#seven-refusal-conditions">Seven refusals</a> &middot;
+  <a href="#nine-refusal-conditions">Nine refusals</a> &middot;
   <a href="#citation-parsing">Citation parsing</a> &middot;
   <a href="#why-bm25-and-not-embeddings">Why BM25</a> &middot;
   <a href="#amendment-history-is-often-the-question-itself">Amendment history</a> &middot;
@@ -60,7 +60,7 @@ flowchart LR
     C --> T{"was this provision<br/>in force at the relevant date?"}
     T -->|"repealed"| X["REFUSE"]
     T -->|"in force"| G["citation-grounded answer"]
-    G --> F{"eight refusal conditions"}
+    G --> F{"nine refusal conditions"}
     F -->|"any triggered"| X
     F -->|"none"| A["answer, with citations"]
 
@@ -101,11 +101,11 @@ gets a default and the default eventually gets used for a question where it is w
 Superseded text is **retained, not deleted**. Questions about past conduct are asked
 against the law as it then stood, and deleting history makes those unanswerable.
 
-## Seven refusal conditions
+## Nine refusal conditions
 
 Each exists because the alternative is an answer that is confident and wrong. The first
-four were the original design; the last three were added after an independent review got
-a wrong answer out of each of them.
+four were the original design; the last five were added after independent reviews got a
+wrong answer out of each of them.
 
 | | What it prevents | `refusal_status` |
 |---|---|---|
@@ -116,6 +116,8 @@ a wrong answer out of each of them.
 | No Act named | "section 9" of what? Guessing could answer about the wrong law | `no_act_named` |
 | **Act not recognised** | "Section 302 of the Indian Penal Code" certified as Pakistani law | `act_not_recognised` |
 | **Different offence** | Answering "attempt to murder" with the murder provision | `different_offence` |
+| **Subject not in corpus** | Answering "dacoity with murder" from the nearest provision when the corpus holds nothing on dacoity | `subject_not_in_corpus` |
+| **Citation unreliable** | Citing s.57 for a rule that is really s.65, because the source's contents list stopped before its body did | `citation_unreliable` |
 
 Every refusal carries `refusal_status` as well as prose, so a client can branch on the
 kind without matching on wording that will be reworded.
@@ -222,7 +224,7 @@ each tool's structured result matches the `outputSchema` it declares.
 
 | Tool | Use it for |
 |---|---|
-| `answer_question` | "what does the law say about X *on this date*": provision text with citations, or one of the eight refusals |
+| `answer_question` | "what does the law say about X *on this date*": provision text with citations, or one of the nine refusals |
 | `check_citations` | **auditing a draft** (a brief, a notice, or a model's own answer). Every citation gets a status for the date: `in_force`, `amended_since`, `not_in_force`, `not_yet_in_force`, `unknown_provision`, `no_act_named`, `statute_not_loaded`, `not_checkable` or `before_record` (dated before the corpus starts recording that statute), plus its character offset |
 | `provision_history` | "when did section 20 change?": every version, how each one ended, and the instrument on each side |
 | `compare_versions` | "what did the amendment do?": a word-level diff between the text on two dates |
@@ -431,7 +433,7 @@ CI badge are the record. What the suite covers:
 
 | Area | What it holds |
 |---|---|
-| the library | retrieval, answering, the eight refusal conditions |
+| the library | retrieval, answering, the nine refusal conditions |
 | the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included |
 | corpus building | the importer against real statute layouts from two public sources |
 | record coverage | what the corpus does and does not claim to know |
@@ -465,9 +467,11 @@ Run them with
   read the import report before loading the result.
 - A bare `Article 25` is read as the Constitution's, which is what it means in nearly all
   Pakistani writing. An article of any other instrument has to be named (`Article 17 QSO`).
-- Relevance is lexical. `transmitting` does not match `transmits`, so a question phrased
-  far from the statute's own words can be refused where a reader would have found the
-  provision. That errs toward refusing, which is the side this repo chooses to err on.
+- Relevance is lexical. `meaning` does not reach `denotes`, so "the meaning of animal in
+  this Code" is refused although s.47 ("The word 'animal' denotes…") answers it. Eight of
+  the 34 paraphrases in the benchmark are refused for reasons of that shape, and none is
+  answered wrongly. That errs toward refusing, which is the side this repo chooses to err
+  on.
 - Sections are the unit. A subsection citation returns its whole section, and an amended
   subsection has to be recorded as a new text of the whole section.
 - Urdu support is tokenisation-level. Full bilingual retrieval needs the Urdu

@@ -451,6 +451,25 @@ def _layout(text: str) -> _Layout:
     return _Layout(toc, toc_order, toc_start, toc_end, candidates, chain, unlisted)
 
 
+def buried_offset(body: str, number: str) -> int:
+    """Where `body` stops being this provision and starts being the next one.
+
+    `len(body)` when nothing is buried, so `body[:buried_offset(...)]` is always the
+    provision's own text.
+    """
+    try:
+        here = int("".join(c for c in number if c.isdigit()) or 0)
+    except ValueError:
+        return len(body)
+    last = here
+    for match in _SWALLOWED.finditer(body):
+        digits = int("".join(c for c in match.group(1) if c.isdigit()))
+        if digits <= last:
+            continue
+        return match.start()
+    return len(body)
+
+
 def buried_numbers(body: str, number: str) -> list[str]:
     """Numbers in `body` that look like later provisions' headings, in order.
 

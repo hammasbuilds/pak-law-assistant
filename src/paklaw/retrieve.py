@@ -272,6 +272,15 @@ NOT_A_SUBJECT = frozenset(
         "else",
         "instead",
         "whether",
+        # Pure adverbs of degree and frequency. A statute legislates about conduct, not
+        # about "never" - but "establish", "people" and "acting" are NOT here, because
+        # a penal code establishes tribunals, protects people and penalises acting in
+        # bad faith. The list only takes words that cannot be legislated about.
+        "never",
+        "always",
+        "ever",
+        "simply",
+        "merely",
     }
 )
 
@@ -377,6 +386,20 @@ def expand(term: str) -> set[str]:
     return forms
 
 
+#: Punctuation inside a transliterated Arabic term of art. The statute writes "ta'zir"
+#: and a person types "tazir"; `_TOKEN` keeps the apostrophe, so the two were different
+#: words and never met. Worse than a scoring loss: "tazir" is in QUALIFIERS, so the
+#: mismatch escalated to a hard `different_offence` refusal on a question s.302(b)
+#: answers literally - while "ta zir", spelled with a space, worked. Folded on both
+#: sides, the way `normalise_number` already folds "489-F" to "489F".
+_FOLD = re.compile(r"[’'‐-―-]")
+
+
+def _fold(token: str) -> str:
+    folded = _FOLD.sub("", token)
+    return folded or token
+
+
 def tokenise(text: str, *, keep_stopwords: bool = False) -> list[str]:
     """Words, lowercased. Urdu script is preserved as its own tokens.
 
@@ -384,7 +407,7 @@ def tokenise(text: str, *, keep_stopwords: bool = False) -> list[str]:
     code, and a tokeniser that drops digits loses the ability to find a section by its
     number.
     """
-    tokens = [t.lower() for t in _TOKEN.findall(text)]
+    tokens = [_fold(t.lower()) for t in _TOKEN.findall(text)]
     if keep_stopwords:
         return tokens
     return [t for t in tokens if t not in LEGAL_STOPWORDS]

@@ -249,7 +249,21 @@ def compare_versions(
 
     result = {"citation": citation, "before": describe(v1, d1), "after": describe(v2, d2)}
     if v1 is None or v2 is None:
-        result["summary"] = "not in force on both dates; nothing to compare"
+        # The condition is "or" and the message used to say "both", so the common and
+        # interesting case - it did not exist then and does now - was summarised as
+        # though it had never been in force at all. `summary` is the field a model
+        # paraphrases to a reader, and a wrong statement about whether a provision was
+        # in force on a date is the harm this repository is built around.
+        if v1 is None and v2 is None:
+            result["summary"] = "in force on neither date; nothing to compare"
+        else:
+            absent, present = (d1, d2) if v1 is None else (d2, d1)
+            result["summary"] = (
+                f"not in force on {absent.isoformat()}, in force on "
+                f"{present.isoformat()}; there is no earlier text to diff against"
+            )
+        # Present on every path, so a client reads one shape rather than branching.
+        result["changes"] = []
         return result
     if v1 is v2:
         result["summary"] = "the same version was in force on both dates"

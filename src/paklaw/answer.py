@@ -1,6 +1,6 @@
 """Grounded answering: cite a provision in force, or refuse.
 
-Eight refusal conditions, and each one exists because the alternative is an answer that
+Nine refusal conditions, and each one exists because the alternative is an answer that
 is confident and wrong. Every refusal also carries a `refusal_status` token, so a caller
 branches on the kind rather than on prose that will be reworded.
 
@@ -24,6 +24,11 @@ branches on the kind rather than on prose that will be reworded.
                                  any form. "Dacoity" is absent from thirteen sections of
                                  the Penal Code, and the other two words of "the sentence
                                  for dacoity with murder" were enough to open the gate
+  **Citation unreliable**      — the provision that answers the question is sitting
+                                 inside another provision's text, because the source's
+                                 contents list stopped before its body did. The answer
+                                 is there; the citation would name the wrong section,
+                                 which is worse than no answer
 
 The second is the one specific to law and the one general RAG systems have no concept
 of. A repealed section reads exactly like a live one. Nothing in the text says
@@ -40,9 +45,10 @@ import datetime as dt
 import re
 from dataclasses import dataclass, field
 
-from .citation import Citation, find_statute, parse, statute_aliases
+from .citation import Citation, find_statute, names_unloaded_act, parse, statute_aliases
 from .corpus import Corpus
-from .retrieve import Hit, LawSearch
+from .retrieve import Hit, LawSearch, tokenise
+from .split import buried_offset
 
 
 @dataclass
@@ -133,8 +139,12 @@ REFUSAL_FOREIGN_ACT = "the cited provision names an Act this corpus does not hol
 # The question carries a word that selects a neighbouring offence, and the best
 # provision does not contain it. "Attempt to murder" is s.324, not s.302.
 REFUSAL_QUALIFIER = "the nearest provision is about a different offence"
+REFUSAL_UNRELIABLE_CITATION = (
+    "the provision that answers this is inside another provision's text in this corpus, "
+    "so citing it would name the wrong one"
+)
 REFUSAL_NOT_IN_CORPUS = (
-    "the question names something this corpus has no provision about, in any form"
+    "no provision in this corpus contains a word the question turns on, in any form"
 )
 
 
@@ -329,6 +339,23 @@ class LawAssistant:
         # not content to match against a provision. Leaving them in refused the question
         # for missing "penal" and "code" — words that appear in no provision's text,
         # because they are the name of the book the provisions are in.
+        # An Act or a jurisdiction this corpus does not answer for, named in prose
+        # rather than in a citation. The citation route already refused "section 302 of
+        # the Indian Penal Code"; the prose route scoped on the substring "penal code"
+        # and answered "the punishment for murder under the Indian Penal Code" with
+        # s.302 PPC. Same words, same question, and the wrong country's criminal law.
+        if statute is None:
+            foreign = names_unloaded_act(question, extra=self.aliases)
+            if foreign is not None:
+                result.refused = True
+                result.refusal_status = "act_not_recognised"
+                result.refusal_reason = (
+                    f"{REFUSAL_FOREIGN_ACT}: {foreign!r}. This corpus holds Pakistani "
+                    "statutes, and a provision of the same number in another country's "
+                    "Act says something else."
+                )
+                return result
+
         asked = question
         if statute is None:
             named = find_statute(question, extra=self.aliases)
@@ -377,10 +404,19 @@ class LawAssistant:
             top = hits[0]
             result.refused = True
             result.refusal_status = "subject_not_in_corpus"
+            # Says what is true. The old wording - "the question names something this
+            # corpus has no provision about" - is true of "dacoity" and false of
+            # "acting", and a blocklist of ordinary words cannot tell them apart. An
+            # independent review got that sentence out of a question Section 52 PPC
+            # answers verbatim, which is a wrong statement of fact delivered with a
+            # refusal's authority: the same defect class as a wrong citation.
             result.refusal_reason = (
                 f"{REFUSAL_NOT_IN_CORPUS}: "
-                f"{', '.join(repr(t) for t in top.unknown_terms)}. The nearest provision "
-                f"is {top.provision.citation().pretty()}, which is about something else."
+                f"{', '.join(repr(t) for t in top.unknown_terms)} "
+                f"{'appear' if len(top.unknown_terms) > 1 else 'appears'} in no provision "
+                f"here. The nearest is {top.provision.citation().pretty()}. If one of "
+                "those words is what the question is about, this corpus does not hold it; "
+                "if it is incidental, rephrase in the statute's own words."
             )
             return result
 
@@ -404,7 +440,6 @@ class LawAssistant:
             and h.score >= self.min_score
             and not h.missing_qualifiers
         ]
-        result.passages = [self._to_passage(h, as_of_date) for h in kept]
         # A provision whose text runs on into later provisions is not one section, and
         # the reader is the only one who can tell. It is also the one most likely to be
         # returned: nine headings' worth of words match almost any question about the
@@ -412,14 +447,42 @@ class LawAssistant:
         # import, because the person reading the answer is not the person who built the
         # corpus.
         swallowed = self.corpus.swallowed_headings()
-        for hit in kept:
-            buried = swallowed.get(hit.provision.key)
-            if buried:
+        if swallowed:
+            index = self.search._index_for(as_of_date)
+            for hit in list(kept):
+                buried = swallowed.get(hit.provision.key)
+                if not buried:
+                    continue
+                text = hit.provision.text
+                cut = buried_offset(text, hit.provision.number)
+                own = set(tokenise(text[:cut])) | set(tokenise(hit.provision.heading))
+                supported = [t for t in hit.matched_terms if index._forms(t) & own]
+                if len(supported) / len(hit.matched_terms) > self.min_coverage:
+                    # The provision's own words answer the question; the buried text is
+                    # extra, and a caveat is the right size of response.
+                    result.warnings.append(
+                        f"{hit.provision.citation().pretty()} runs on into "
+                        f"{hit.provision.unit}s {', '.join(buried)}; the text served under "
+                        "this citation is longer than one provision"
+                    )
+                    continue
+                # The match came from the buried part, so the citation would name the
+                # wrong provision - the harm this whole system exists to prevent, and
+                # one a warning does not undo. A reader filing "Section 57 PPC" for the
+                # fine-default rule has filed s.65.
+                kept.remove(hit)
                 result.warnings.append(
-                    f"{hit.provision.citation().pretty()} appears to run on into "
-                    f"{hit.provision.unit}s {', '.join(buried)}; its text is longer than "
-                    "one provision and may answer more than was asked"
+                    f"a provision answering this appears inside "
+                    f"{hit.provision.citation().pretty()}, which runs on into "
+                    f"{hit.provision.unit}s {', '.join(buried)}; it is not cited here "
+                    "because the citation would name the wrong one"
                 )
+        if not kept and hits:
+            result.refused = True
+            result.refusal_status = "citation_unreliable"
+            result.refusal_reason = REFUSAL_UNRELIABLE_CITATION
+            return result
+        result.passages = [self._to_passage(h, as_of_date) for h in kept]
         return result
 
     # ---- history ---------------------------------------------------------------

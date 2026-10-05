@@ -159,6 +159,7 @@ _REFUSAL = {
             "weak_match",
             "different_offence",
             "subject_not_in_corpus",
+            "citation_unreliable",
             None,
         ],
         "description": "The SAME refusal, as a token to branch on. `refusal_reason` is "
@@ -370,6 +371,24 @@ TOOLS: list[dict[str, Any]] = [
                         "note": {"type": "string"},
                         "heading": {"type": ["string", "null"]},
                         "offset": {"type": "integer", "description": "Character offset."},
+                        "checked_as": {
+                            "type": "string",
+                            "description": "Present when a subsection was asked about and "
+                            "the section was checked: whether subsection (9) exists is not "
+                            "recorded, so the answer is about the whole section.",
+                        },
+                        "subdivision_checked": {
+                            "type": "boolean",
+                            "description": "False alongside checked_as, so a caller cannot "
+                            "read the status as a statement about the subsection.",
+                        },
+                        "history": {
+                            "type": "array",
+                            "items": _VERSION,
+                            "description": "Present when the citation is not in force on "
+                            "the date: the versions that do exist, which are the answer to "
+                            "'then when was it'.",
+                        },
                     },
                     "required": ["citation", "kind", "status"],
                 },
@@ -489,6 +508,7 @@ TOOLS: list[dict[str, Any]] = [
         output={
             "statute": {"type": "string"},
             "as_of": {"type": "string"},
+            **_REFUSAL,
             "in_force": {"type": "integer"},
             "not_in_force_on_this_date": {
                 "type": "integer",
@@ -940,7 +960,24 @@ class LawServer:
         as_of = _date(arguments, "as_of")
         offset = _offset(arguments)
         if statute not in self.loaded:
-            raise ToolError(f"{statute} is not in this corpus; loaded: {', '.join(self.loaded)}")
+            # A statute this corpus does not hold is a well-formed argument naming
+            # something absent, which is a refusal - the same thing `answer_question`
+            # calls `no_act_named` and `check_citations` calls `statute_not_loaded`.
+            # Raised as a tool error, it told a model it had called the tool wrongly,
+            # and a model told that retries instead of reporting.
+            return {
+                "refused": True,
+                "refusal_status": "statute_not_loaded",
+                "refusal_reason": (
+                    f"{statute} is not in this corpus; loaded: {', '.join(self.loaded)}"
+                ),
+                "statute": statute,
+                "as_of": as_of.isoformat(),
+                "in_force": 0,
+                "not_in_force_on_this_date": 0,
+                "provisions": [],
+                "total": 0,
+            }
         result = contents(self.corpus, statute, as_of=as_of)
         return self._with_corpus_note(_page(result, "provisions", offset, LIST_LIMIT))
 

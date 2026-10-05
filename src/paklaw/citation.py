@@ -640,8 +640,14 @@ def find_statute(text: str, *, extra: dict[str, str] | None = None) -> tuple[str
     Returns (key, matched phrase) or None. The phrase is returned so a caller can take
     those tokens out of the query rather than guessing which ones they were.
     """
-    lowered = re.sub(r"\s+", " ", text.lower())
     table = {**STATUTES, **(extra or {})}
+    if names_unloaded_act(text, extra=extra):
+        # "the Indian Penal Code" contains "penal code". Scoping on that substring threw
+        # away the only word that mattered and answered a question about Indian law with
+        # a section of the Pakistan Penal Code - confidently, correctly formatted, and
+        # with no warning. The caller refuses instead; it is not this corpus's Act.
+        return None
+    lowered = re.sub(r"\s+", " ", text.lower())
     phrases = sorted(table, key=len, reverse=True)
     for phrase in phrases:
         # Whole words only: "code" must not match inside "coded", and a two-letter key
@@ -649,3 +655,62 @@ def find_statute(text: str, *, extra: dict[str, str] | None = None) -> tuple[str
         if re.search(rf"(?<![\w.]){re.escape(phrase)}(?![\w])", lowered):
             return table[phrase], phrase
     return None
+
+
+#: Adjectives and country names that place a question in another legal system. A
+#: question carrying one is not about this corpus whatever else it says, and two of the
+#: three ways to ask it - "in India", "under Indian law" - carry no Act title at all, so
+#: matching titles alone is not enough.
+FOREIGN_JURISDICTIONS = frozenset(
+    {
+        "indian",
+        "india",
+        "bangladesh",
+        "bangladeshi",
+        "english",
+        "england",
+        "british",
+        "britain",
+        "american",
+        "america",
+        "australian",
+        "australia",
+        "canadian",
+        "canada",
+        "singaporean",
+        "singapore",
+        "malaysian",
+        "malaysia",
+        "nepalese",
+        "nepal",
+        "afghan",
+        "afghanistan",
+        "iranian",
+        "iran",
+    }
+)
+_FOREIGN_WORD = re.compile(
+    r"(?<![\w.])(" + "|".join(sorted(FOREIGN_JURISDICTIONS, key=len, reverse=True)) + r")(?![\w])",
+    re.I,
+)
+
+
+def names_unloaded_act(text: str, *, extra: dict[str, str] | None = None) -> str | None:
+    """An Act or jurisdiction in `text` that this corpus does not answer for.
+
+    Returns the words that named it, or None.
+
+    Two shapes. A full capitalised Act title - "Indian Penal Code", "Companies Act" -
+    that resolves to no loaded statute; `_ACT_TITLE` already recognises these and
+    `parse` already refuses citations that carry one, so the only thing missing was for
+    the prose route to ask. And a jurisdiction named without any title at all, which is
+    how the question is usually put: "what is the punishment for murder in India?".
+    """
+    table = {**STATUTES, **(extra or {})}
+    for match in re.finditer(_ACT_TITLE, text):
+        title = re.sub(r"\s+", " ", match.group(0).strip()).lower()
+        title = re.sub(r"^the\s+", "", title)
+        if title not in table:
+            return match.group(0).strip()
+    found = _FOREIGN_WORD.search(text)
+    return found.group(0) if found else None

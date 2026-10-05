@@ -401,10 +401,23 @@ class TestNewTools:
         )
         assert body(forward)["changes"] == body(backward)["changes"]
 
-    def test_list_provisions_for_a_statute_not_loaded_is_a_tool_error(self):
+    def test_list_provisions_for_a_statute_not_loaded_is_a_refusal_not_an_error(self):
+        """A well-formed argument naming something absent is a refusal.
+
+        It used to be a tool error, which tells a model it called the tool wrongly -
+        and a model told that retries rather than reporting. `answer_question` calls
+        the same condition `no_act_named` and `check_citations` calls it
+        `statute_not_loaded`; this is the third name for one thing, so it uses the
+        second. It is also the only path that returned no structuredContent, which the
+        README's "every tool on every path" schema claim did not survive.
+        """
         result = tool("list_provisions", {"statute": "CrPC", "as_of": "2026-01-01"})
-        assert result["isError"] is True
-        assert "not in this corpus" in result["content"][0]["text"]
+        assert result.get("isError") is not True
+        structured = body(result)
+        assert structured["refused"] is True
+        assert structured["refusal_status"] == "statute_not_loaded"
+        assert "not in this corpus" in structured["refusal_reason"]
+        assert structured["provisions"] == []
 
     def test_list_provisions(self):
         result = body(tool("list_provisions", {"statute": "peca", "as_of": "2026-01-01"}))
@@ -610,6 +623,13 @@ _OUTPUT_CASES = [
         "answer_question",
         {"question": "punishment under the Indian Penal Code", "as_of": "2026-01-01"},
     ),
+    # check_citations grows three fields on branches no case reached: a subsection
+    # citation (checked_as, subdivision_checked) and a citation not in force on the date
+    # (history). All three were returned and undeclared, which is the same defect the
+    # bidirectional check was added for - the check was right and the cases were thin.
+    ("check_citations", {"text": "section 20(1) PECA", "as_of": "2026-01-01"}),
+    ("check_citations", {"text": "section 20 PECA", "as_of": "2010-01-01"}),
+    ("check_citations", {"text": "section 999 PECA and Part 3", "as_of": "2026-01-01"}),
 ]
 
 
@@ -710,3 +730,31 @@ def test_every_declared_refusal_status_is_one_the_code_can_produce():
     )
     missing = sorted(status for status in declared if f'"{status}"' not in source)
     assert missing == [], missing
+
+
+def test_compare_versions_does_not_say_both_when_it_means_either():
+    """The condition is `or` and the summary said "both".
+
+    So the common and interesting case - it did not exist on the earlier date and does
+    now - was summarised as though the provision had never been in force at all.
+    `summary` is the field a model paraphrases to a reader, and a wrong statement about
+    whether a provision was in force on a date is the harm this repository is about.
+    """
+    server = LawServer(*load_corpus(None))
+
+    one_side = server.compare_versions(
+        {"citation": "section 20 PECA", "before": "2015-01-01", "after": "2026-01-01"}
+    )
+    assert one_side["before"]["in_force"] is False
+    assert one_side["after"]["in_force"] is True
+    assert "not in force on 2015-01-01, in force on 2026-01-01" in one_side["summary"]
+    assert "both" not in one_side["summary"]
+
+    neither = server.compare_versions(
+        {"citation": "section 20 PECA", "before": "1990-01-01", "after": "1991-01-01"}
+    )
+    assert neither["summary"] == "in force on neither date; nothing to compare"
+
+    # `changes` on every path, so a client reads one shape rather than branching.
+    for result in (one_side, neither):
+        assert result["changes"] == []
