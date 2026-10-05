@@ -181,6 +181,8 @@ class Corpus:
     # `provisions` directly still works; without it every lookup scans the whole corpus.
     _by_key: dict[str, list[Provision]] = field(default_factory=dict, repr=False)
     _indexed: int = field(default=-1, repr=False)
+    _swallowed: dict[str, list[str]] = field(default_factory=dict, repr=False)
+    _swallowed_at: int = field(default=-1, repr=False)
 
     def _index(self) -> dict[str, list[Provision]]:
         if self._indexed != len(self.provisions):
@@ -272,6 +274,29 @@ class Corpus:
                 f"that date would not be reflected for {date.isoformat()}"
             )
         return warnings
+
+    def swallowed_headings(self) -> dict[str, list[str]]:
+        """Provisions whose text appears to contain later provisions' headings.
+
+        The importer reports this when it builds a corpus; nothing reported it when a
+        corpus was served. It matters at query time, not just at build time: a provision
+        holding nine others contains nine headings' worth of words, so it matches almost
+        any question about its subject and wins on coverage. A reader handed one as an
+        answer should be told that what they are reading is not one section.
+
+        Not a `validate` problem. A corpus can be served, usefully, with a known gap in
+        it - refusing to load would be worse than saying so.
+        """
+        from .split import buried_numbers
+
+        if self._swallowed_at != len(self.provisions):
+            self._swallowed = {
+                p.key: buried
+                for p in self.provisions
+                if (buried := buried_numbers(p.text, p.number))
+            }
+            self._swallowed_at = len(self.provisions)
+        return self._swallowed
 
     def validate(self) -> list[str]:
         """Structural problems that would produce wrong answers silently.

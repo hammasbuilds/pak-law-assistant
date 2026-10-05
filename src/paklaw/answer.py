@@ -405,6 +405,21 @@ class LawAssistant:
             and not h.missing_qualifiers
         ]
         result.passages = [self._to_passage(h, as_of_date) for h in kept]
+        # A provision whose text runs on into later provisions is not one section, and
+        # the reader is the only one who can tell. It is also the one most likely to be
+        # returned: nine headings' worth of words match almost any question about the
+        # subject, and coverage is the first sort key. Said here rather than only at
+        # import, because the person reading the answer is not the person who built the
+        # corpus.
+        swallowed = self.corpus.swallowed_headings()
+        for hit in kept:
+            buried = swallowed.get(hit.provision.key)
+            if buried:
+                result.warnings.append(
+                    f"{hit.provision.citation().pretty()} appears to run on into "
+                    f"{hit.provision.unit}s {', '.join(buried)}; its text is longer than "
+                    "one provision and may answer more than was asked"
+                )
         return result
 
     # ---- history ---------------------------------------------------------------

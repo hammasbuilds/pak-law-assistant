@@ -511,3 +511,40 @@ def test_a_query_term_is_expanded_once_not_once_per_provision(monkeypatch):
     # heading pass, which asks about the same terms again.
     assert len(calls) <= 3 * len(set(calls)), (len(calls), len(set(calls)))
     assert len(calls) < provisions, (len(calls), provisions)
+
+
+def test_a_provision_that_runs_on_into_others_says_so_in_the_answer(assistant):
+    """s.57 holds s.58 to s.66, because the contents stop before the text does.
+
+    The importer reports that when a corpus is built. Nothing reported it when one was
+    served - and query time is where it bites: nine headings' worth of words match
+    almost any question about punishment, and coverage is the first sort key, so the
+    malformed provision is the one most likely to be returned.
+    """
+    answer = assistant.answer(
+        "how is imprisonment for life reckoned in fractions of punishment?",
+        as_of="2026-01-01",
+    )
+    assert [p.citation for p in answer.passages][0] == "Section 57 PPC"
+    warned = [w for w in answer.warnings if "Section 57 PPC" in w]
+    assert len(warned) == 1, answer.warnings
+    for number in ("58", "66"):
+        assert number in warned[0]
+
+
+def test_a_well_formed_answer_carries_no_such_warning(assistant):
+    """It has to be quiet on the provisions that are fine, or it is noise on every
+    answer."""
+    answer = assistant.answer("what is the punishment for murder?", as_of="2026-01-01")
+    assert [p.citation for p in answer.passages][0] == "Section 302 PPC"
+    assert [w for w in answer.warnings if "runs on into" in w] == []
+
+
+def test_the_corpus_names_what_it_is_known_to_get_wrong(assistant):
+    corpus = assistant.corpus
+    assert corpus.swallowed_headings() == {
+        "PPC:section:57": ["58", "59", "60", "61", "62", "63", "64", "65", "66"]
+    }
+    # Cached like the index, and invalidated the same way.
+    before = corpus.swallowed_headings()
+    assert corpus.swallowed_headings() is before

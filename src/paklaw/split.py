@@ -451,7 +451,7 @@ def _layout(text: str) -> _Layout:
     return _Layout(toc, toc_order, toc_start, toc_end, candidates, chain, unlisted)
 
 
-def _buried_numbers(body: str, number: str) -> list[str]:
+def buried_numbers(body: str, number: str) -> list[str]:
     """Numbers in `body` that look like later provisions' headings, in order.
 
     Only numbers greater than this provision's are counted, and only in ascending
@@ -571,7 +571,7 @@ def split_act(
             continue
         if len(body) > too_long:
             too_long_found.append({"provision": f"{unit} {number}", "characters": len(body)})
-        buried = _buried_numbers(body, number)
+        buried = buried_numbers(body, number)
         if buried:
             swallowed.append({"provision": f"{unit} {number}", "appears_to_contain": buried})
         rows.append(

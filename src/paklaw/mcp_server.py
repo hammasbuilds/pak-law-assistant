@@ -639,6 +639,21 @@ TOOLS: list[dict[str, Any]] = [
                     "required": ["statute", "provisions", "versions"],
                 },
             },
+            "malformed": {
+                "type": "array",
+                "description": "Provisions whose text runs on into later provisions, so "
+                "what is served under one citation is more than one section. Empty is the "
+                "normal case; a non-empty list is a known gap in this corpus, not a bug "
+                "in the question.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "citation": {"type": "string"},
+                        "appears_to_contain": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["citation", "appears_to_contain"],
+                },
+            },
             "earliest": {"type": ["string", "null"]},
             "latest_change": {"type": ["string", "null"]},
             "as_at": {
@@ -986,6 +1001,12 @@ class LawServer:
                         "currently_in_force": by_statute[s]["in_force"],
                     }
                     for s in sorted(by_statute)
+                ],
+                # What this corpus is known to get wrong, named rather than left for a
+                # reader to notice from a provision that is nine provisions long.
+                "malformed": [
+                    {"citation": key, "appears_to_contain": buried}
+                    for key, buried in sorted(self.corpus.swallowed_headings().items())
                 ],
                 "earliest": min(p.in_force_from for p in provisions).isoformat(),
                 "latest_change": max(
