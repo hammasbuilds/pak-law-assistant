@@ -93,7 +93,27 @@ REPORTS = {"PLD", "SCMR", "CLC", "YLR", "MLD", "PTD", "PLC", "CLD", "PCrLJ", "NL
 # than dropped: the same argument as an unrecognised Act. A citation nobody parsed is a
 # citation nobody checked, and an audit that returns "no citations found" over a draft
 # full of AIR authority has told the reader the opposite of the truth.
-FOREIGN_REPORTS = {"AIR", "SCC", "AC", "WLR", "QB", "KB", "ER", "Cr.LJ", "CrLJ", "ILR"}
+FOREIGN_REPORTS = {
+    "AIR",
+    "SCC",
+    "AC",
+    "WLR",
+    "QB",
+    "KB",
+    "ER",
+    "Cr.LJ",
+    "CrLJ",
+    "ILR",
+    # Volume-first series, matched by _REPORT_VOLUME.
+    "U.S.",
+    "US",
+    "AllER",
+    "Ch",
+    "F.2d",
+    "F2d",
+    "F.3d",
+    "F3d",
+}
 
 # 302, 302A, 302-B, 20(1), 20(1)(a). The hyphenated form is how 489-F and 354-A are
 # written; without it "302-B" is read as 302, a different offence.
@@ -148,12 +168,21 @@ def members(numbers: str) -> list[str]:
 
 # A letter immediately before the marker means it is the end of a word: "Rs. 500",
 # "Part 3", "chart 5". None of those is a citation.
-_NOT_AFTER_LETTER = r"(?<![A-Za-z])"
+# The second lookbehind rejects the "S." of an abbreviation. "410 U.S. 113" was read as
+# "Section 113" of no Act, because the character before the S is a full stop rather than
+# a letter - so a United States Supreme Court citation came back as a Pakistani section
+# number. Fixed width, so Python accepts it.
+_NOT_AFTER_LETTER = r"(?<![A-Za-z])(?<![A-Za-z]\.)"
 
 # An Act title this module does not know: up to five capitalised words ending in the
 # noun Acts are named with. "Indian Penal Code", "Companies Act", "Qanun-e-Shahadat
 # Order". Not a statute key - the point is only to notice that one was named.
-_ACT_TITLE = r"(?-i:(?:[A-Z][\w.'\-]*\s+){1,5}(?:Code|Act|Ordinance|Order|Rules|Regulations))"
+# A parenthesised qualifier is the standard way Pakistani subordinate legislation is
+# named - "the Companies (General Provisions) Rules 2018" - and without it the title
+# pattern stopped at the bracket and the whole citation vanished. Allowed anywhere a
+# word can appear, so "(Amendment)" and "(General Provisions)" both parse.
+_TITLE_WORD = r"(?:[A-Z][\w.'\-]*|\([^)]{1,48}\))"
+_ACT_TITLE = r"(?-i:(?:" + _TITLE_WORD + r"\s+){1,6}(?:Code|Act|Ordinance|Order|Rules|Regulations))"
 
 # Divisions of an Act that are not provisions. The bare pattern would otherwise read
 # "Chapter 5 PPC" as section 5 of the PPC, which is a different thing that exists.
@@ -322,9 +351,17 @@ _REPORT_A = re.compile(
     re.I,
 )
 _REPORT_B = re.compile(
-    r"\b(?P<year>\d{4})\s+(?P<report>" + _REPORT_NAMES + r")\s+"
+    r"\(?\b(?P<year>\d{4})\b\)?\s+(?P<report>" + _REPORT_NAMES + r")\s+"
     r"(?P<court>" + _COURT + r")?\s*(?P<page>\d+)\b",
     re.I,
+)
+# "410 U.S. 113": volume first, then the reporter, then the page. English and American
+# series are cited this way and the two orderings above cannot see it. Recognised so it
+# is reported as a foreign report rather than mis-read - "U.S. 113" used to come back as
+# "Section 113".
+_REPORT_VOLUME = re.compile(
+    r"\b(?P<volume>\d{1,4})\s+(?P<report>U\.?\s?S\.?|F\.\s?\d?d|WLR|All\s?ER|Ch|QB|KB|AC)\s+"
+    r"(?P<page>\d{1,4})\b"
 )
 
 
@@ -504,6 +541,26 @@ def locate(text: str, *, statutes: dict[str, str] | None = None) -> list[tuple[i
                         ),
                     )
                 )
+
+    # Volume-first series, claimed before the section patterns can read the reporter's
+    # abbreviation as a provision marker.
+    for match in _REPORT_VOLUME.finditer(text):
+        if claim(match):
+            report = re.sub(r"[\s.]", "", match.group("report")).upper()
+            found.append(
+                (
+                    match.start(),
+                    Citation(
+                        kind="reported",
+                        report=report,
+                        # No year in this form; the volume number is the identity.
+                        year="",
+                        court=match.group("volume"),
+                        page=match.group("page"),
+                        raw=match.group(0),
+                    ),
+                )
+            )
 
     # Articles belong to the Constitution unless another instrument is named: the
     # Qanun-e-Shahadat Order is also numbered in articles, and "Article 25 QSO" is not

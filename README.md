@@ -5,7 +5,7 @@
 
 <p align="center">
   <a href="#the-failure-this-exists-to-prevent">The failure it prevents</a> &middot;
-  <a href="#four-refusal-conditions">Four refusals</a> &middot;
+  <a href="#seven-refusal-conditions">Seven refusals</a> &middot;
   <a href="#citation-parsing">Citation parsing</a> &middot;
   <a href="#why-bm25-and-not-embeddings">Why BM25</a> &middot;
   <a href="#amendment-history-is-often-the-question-itself">Amendment history</a> &middot;
@@ -60,7 +60,7 @@ flowchart LR
     C --> T{"was this provision<br/>in force at the relevant date?"}
     T -->|"repealed"| X["REFUSE"]
     T -->|"in force"| G["citation-grounded answer"]
-    G --> F{"four refusal conditions"}
+    G --> F{"seven refusal conditions"}
     F -->|"any triggered"| X
     F -->|"none"| A["answer, with citations"]
 
@@ -101,14 +101,24 @@ gets a default and the default eventually gets used for a question where it is w
 Superseded text is **retained, not deleted**. Questions about past conduct are asked
 against the law as it then stood, and deleting history makes those unanswerable.
 
-## Four refusal conditions
+## Seven refusal conditions
 
-| | What it prevents |
-|---|---|
-| No provision found | A plausible-sounding answer with no citation |
-| **Provision not in force** | An authoritative-looking answer about repealed law |
-| Weak match | The nearest provision returned as though it were relevant |
-| Cited provision unknown | Answering about a *different* section because it scored well |
+Each exists because the alternative is an answer that is confident and wrong. The first
+four were the original design; the last three were added after an independent review got
+a wrong answer out of each of them.
+
+| | What it prevents | `refusal_status` |
+|---|---|---|
+| No provision found | A plausible-sounding answer with no citation | `nothing_matched` |
+| **Provision not in force** | An authoritative-looking answer about repealed law | `not_in_force` |
+| Weak match | The nearest provision returned as though it were relevant | `weak_match` |
+| Cited provision unknown | Answering about a *different* section because it scored well | `unknown_provision` |
+| No Act named | "section 9" of what? Guessing could answer about the wrong law | `no_act_named` |
+| **Act not recognised** | "Section 302 of the Indian Penal Code" certified as Pakistani law | `act_not_recognised` |
+| **Different offence** | Answering "attempt to murder" with the murder provision | `different_offence` |
+
+Every refusal carries `refusal_status` as well as prose, so a client can branch on the
+kind without matching on wording that will be reworded.
 
 A question that **names** a provision is a lookup, not a search. Returning the nearest
 match to a citation the user spelled out is how a system answers about the wrong law.
@@ -212,7 +222,7 @@ each tool's structured result matches the `outputSchema` it declares.
 
 | Tool | Use it for |
 |---|---|
-| `answer_question` | "what does the law say about X *on this date*": provision text with citations, or one of the four refusals |
+| `answer_question` | "what does the law say about X *on this date*": provision text with citations, or one of the seven refusals |
 | `check_citations` | **auditing a draft** (a brief, a notice, or a model's own answer). Every citation gets a status for the date: `in_force`, `amended_since`, `not_in_force`, `not_yet_in_force`, `unknown_provision`, `no_act_named`, `statute_not_loaded`, `not_checkable` or `before_record` (dated before the corpus starts recording that statute), plus its character offset |
 | `provision_history` | "when did section 20 change?": every version, how each one ended, and the instrument on each side |
 | `compare_versions` | "what did the amendment do?": a word-level diff between the text on two dates |
@@ -421,7 +431,7 @@ CI badge are the record. What the suite covers:
 
 | Area | What it holds |
 |---|---|
-| the library | retrieval, answering, the four refusal conditions |
+| the library | retrieval, answering, the seven refusal conditions |
 | the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included |
 | corpus building | the importer against real statute layouts from two public sources |
 | record coverage | what the corpus does and does not claim to know |
@@ -436,7 +446,7 @@ Run them with
 | Citations | four written forms → one key, articles, Order+Rule as one, SROs, both law-report orderings, multiple in a sentence, bare sections, subsections |
 | Corpus | version on a date, pre-commencement, **boundary belongs to the new version**, history, superseded text retained, impossible intervals, overlap and multi-live detection |
 | Retrieval | numbers kept, stopwords dropped, Urdu tokens, ranking, **never returns a repealed provision**, past-date retrieval, explainability, non-negative IDF |
-| Answering | **same question, different dates, different answers**, citation lookup vs search, all four refusals, citation-first rendering, history |
+| Answering | **same question, different dates, different answers**, citation lookup vs search, every refusal condition, citation-first rendering, history |
 | Corpus building | splitting an Act, **a numbered line inside a body is not a section**, **an omitted section is a boundary**, chapters, substitution/repeal/insert keep dates consistent, a refused amendment leaves the file untouched, atomic writes, the index cache is shared per amendment interval and bounded |
 | Regressions | every citation form above, off-topic questions refused, unanswered citations named, filter before cut, `amended_since`, row types checked at load, re-enactment, schedules, null id, misspelt argument, internal error as a tool error, input limit, 10,000-version and 10,000-citation timings |
 | Audit | every citation status, `all_in_force` only when everything was checked, amended-after-the-date flagged, repealed-then-reinstated, word-level diff, statute ordering |

@@ -528,3 +528,128 @@ def test_a_pakistani_report_is_not_called_foreign():
     assert not is_foreign_report("SCMR")
     # Written either way; both are the Pakistani series.
     assert not is_foreign_report("PCrLJ")
+
+
+# --- third independent review ---------------------------------------------------------
+#
+# Every one of these was a confident wrong answer, which is the only kind of defect this
+# repository treats as serious.
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # s.324 PPC. Answered with s.302 - "punished with death as qisas" - because
+        # "attempt" counted as one interchangeable content word out of three.
+        "what is the punishment for attempt to murder?",
+        "what is the punishment for attempted murder?",
+        # s.109. Same shape.
+        "what is the punishment for abetment of murder?",
+        # s.120B.
+        "punishment for conspiracy to murder",
+    ],
+)
+def test_a_qualifier_that_selects_another_offence_forces_a_refusal(question):
+    server = LawServer(*load_corpus(None))
+    answer = server.answer_question({"question": question, "as_of": "2026-01-01"})
+    assert answer["refused"], answer["passages"][:1]
+    assert answer["refusal_status"] == "different_offence"
+    assert answer["passages"] == []
+
+
+def test_the_same_question_without_the_qualifier_is_still_answered():
+    """The qualifier gate must not swallow the question it was built beside."""
+    server = LawServer(*load_corpus(None))
+    answer = server.answer_question(
+        {"question": "what is the punishment for murder?", "as_of": "2026-01-01"}
+    )
+    assert not answer["refused"]
+    assert answer["passages"][0]["citation"] == "Section 302 PPC"
+
+
+@pytest.mark.parametrize(
+    "question,status",
+    [
+        ("what is section 302 of the Indian Penal Code?", "act_not_recognised"),
+        ("what does section 302 say?", "no_act_named"),
+        ("section 999 PPC", "unknown_provision"),
+        ("what are the rules on cryptocurrency exchange licensing?", "nothing_matched"),
+        ("what is the punishment for attempt to murder?", "different_offence"),
+    ],
+)
+def test_every_refusal_carries_a_status_a_client_can_branch_on(question, status):
+    """`refusal_reason` is prose and will be reworded; this is the contract.
+
+    A client that wanted to treat "not in force" differently from "nothing matched" had
+    to match on that prose, which is a contract nobody agreed to.
+    """
+    server = LawServer(*load_corpus(None))
+    answer = server.answer_question({"question": question, "as_of": "2026-01-01"})
+    assert answer["refused"]
+    assert answer["refusal_status"] == status
+
+
+def test_an_answered_question_has_no_refusal_status():
+    server = LawServer(*load_corpus(None))
+    answer = server.answer_question({"question": "punishment for murder", "as_of": "2026-01-01"})
+    assert not answer["refused"]
+    assert answer["refusal_status"] is None
+
+
+def test_answer_question_no_longer_claims_a_named_act_was_unnamed():
+    """It said "the cited provision names no Act" for text that plainly named one.
+
+    check_citations got this right at the same time, so the two tools reached
+    different conclusions about the same string - worse than either conclusion.
+    """
+    server = LawServer(*load_corpus(None))
+    answer = server.answer_question(
+        {"question": "what is section 302 of the Indian Penal Code?", "as_of": "2026-01-01"}
+    )
+    assert "names no Act" not in answer["refusal_reason"]
+    assert "Indian Penal Code" in answer["refusal_reason"]
+
+    audit = server.check_citations(
+        {"text": "Section 302 of the Indian Penal Code.", "as_of": "2026-01-01"}
+    )
+    # The same conclusion, by the same name, from both tools.
+    assert audit["citations"][0]["status"] == "act_not_recognised"
+    assert answer["refusal_status"] == "act_not_recognised"
+
+
+@pytest.mark.parametrize(
+    "text,kind,pretty",
+    [
+        # "410 U.S. 113" came back as "Section 113" of no Act: the "S." of "U.S." was
+        # read as the section marker, because the character before it is a full stop
+        # rather than a letter.
+        ("410 U.S. 113", "reported", "US 410 113"),
+        ("see 410 U.S. 113 (1973)", "reported", "US 410 113"),
+        # A parenthesised year is how English series are cited, and it parsed to nothing.
+        ("(1932) AC 562", "reported", "AC 1932 562"),
+    ],
+)
+def test_a_foreign_report_is_not_read_as_a_pakistani_section(text, kind, pretty):
+    (citation,) = parse(text)
+    assert citation.kind == kind
+    assert citation.pretty() == pretty
+    assert is_foreign_report(citation.report)
+
+
+@pytest.mark.parametrize("text", ["U.S. policy says", "Rs 500 was paid", "its 302 sections"])
+def test_the_abbreviation_fix_does_not_lose_real_citations(text):
+    assert [c for c in parse(text) if c.kind == "statutory"] == []
+
+
+def test_a_parenthesised_rules_title_parses():
+    """The standard Pakistani naming style, and it produced nothing at all.
+
+    `_ACT_TITLE` allowed only capitalised words, so the title pattern stopped at the
+    bracket and the whole citation vanished - a draft citing it audited as citation-free.
+    """
+    (citation,) = parse("Rule 5 of the Companies (General Provisions) Rules 2018")
+    assert citation.kind == "subordinate"
+    assert citation.pretty() == "Rule 5 of the Companies (General Provisions) Rules 2018"
+    # The unparenthesised and comma forms must still work.
+    assert len(parse("Rule 5 of the Companies General Provisions Rules 2018")) == 1
+    assert len(parse("rule 3 of the Income Tax Rules, 2002")) == 1

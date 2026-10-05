@@ -157,6 +157,38 @@ for _english, _terms in STATUTE_VOCABULARY.items():
         _VOCABULARY_REVERSE.setdefault(_term, ())
         _VOCABULARY_REVERSE[_term] += (_english,)
 
+# Words that choose BETWEEN neighbouring offences rather than describing one. Attempt
+# to murder is s.324, abetment is s.109, conspiracy is s.120B - none of them s.302. A
+# question carrying one of these is about a different provision from the same question
+# without it, so a provision that does not contain the word is not an answer to it.
+#
+# Found by an independent review, which asked "what is the punishment for attempt to
+# murder?" and was told s.302: "punished with death as qisas". Coverage counted
+# "attempt" as one interchangeable content word among three, so two of three cleared
+# the gate. The qualifier is not interchangeable; it is the whole question.
+QUALIFIERS = frozenset(
+    {
+        "attempt",
+        "attempted",
+        "abetment",
+        "abet",
+        "abetting",
+        "conspiracy",
+        "conspiring",
+        "omission",
+        "preparation",
+        "threat",
+        "threatening",
+        "negligence",
+        "negligent",
+        "accidental",
+        "unintentional",
+        "involuntary",
+        "mitigated",
+        "aggravated",
+    }
+)
+
 # Conservative English suffixes. "punishment" must reach "punished", which is the single
 # most common mismatch in a penal code: the question nominalises what the statute
 # conjugates. Only applied to ASCII words long enough that the stem stays a word.
@@ -215,6 +247,11 @@ class Hit:
     # field rather than recomputed, so the order a client sees can be checked
     # against a number it was given.
     ranking: float = 0.0
+    # Share of the question's content terms that appear in this provision's HEADING.
+    heading_coverage: float = 0.0
+    # Terms that select a different provision and are absent from this one. A hit with
+    # any of these is about a neighbouring offence, not this question.
+    missing_qualifiers: list[str] = field(default_factory=list)
 
     @property
     def coverage(self) -> float:
@@ -263,7 +300,27 @@ class BM25Index:
     # which is why it is still the standard 0.75 rather than tuned. 1.0 is the linear
     # form — multiply by the share matched — and is the easiest to explain to anyone
     # auditing a ranking.
-    coverage_weight: float = 1.0
+    coverage_weight: float = 1.5
+    # The heading is a TIEBREAK, never a multiplier, and the distinction was forced by
+    # two questions that pull opposite ways.
+    #
+    # "What is the State?" returned Article 2 CONST ("Islam shall be the State
+    # religion") over Article 7 CONST, headed "Definition of the State", because both
+    # contain the word and Article 2 is shorter. One content word also makes coverage
+    # 1.00 for everything that matches at all, so coverage cannot separate them.
+    #
+    # "Imprisonment for life is reckoned as how many years" wants s.57 "Fractions of
+    # terms of punishment", whose heading shares NO word with the question, over s.55
+    # "Commutation of sentence of imprisonment for life", whose heading matches two. As
+    # a multiplier the heading made that worse, overturning the coverage difference
+    # (0.80 against 0.60) that had just been fixed.
+    #
+    # So coverage decides first and the heading only separates hits that cover the
+    # question equally well. `heading_focus` is the share of the HEADING'S OWN words the
+    # question matched - how much that provision is ABOUT those words - not the share of
+    # the question found in the heading, which both of the Article 2/7 headings score at
+    # 1.00 and which therefore separates nothing.
+    heading_weight: float = 1.0
 
     documents: list[Provision] = field(default_factory=list)
     _tokens: list[list[str]] = field(default_factory=list)
@@ -273,6 +330,11 @@ class BM25Index:
     # stem -> the statute's own words that reduce to it, so a query term can find the
     # inflection the statute actually used without the index losing that word.
     _by_stem: dict[str, set[str]] = field(default_factory=dict)
+    # The heading's own tokens, kept apart from the body. A provision whose HEADING is
+    # about the question is the provision about the question - "Definition of the State"
+    # answers "what is the State?" and Article 2, which merely mentions the State while
+    # being about Islam, does not.
+    _heading_tokens: list[set[str]] = field(default_factory=list)
 
     def fit(self, provisions: Sequence[Provision]) -> BM25Index:
         self.documents = list(provisions)
@@ -280,6 +342,7 @@ class BM25Index:
         self._frequencies = []
         self._document_frequency = Counter()
         self._by_stem = {}
+        self._heading_tokens = []
 
         for provision in self.documents:
             tokens = (
@@ -290,6 +353,7 @@ class BM25Index:
                 + [provision.number.lower()] * int(self.number_boost)
             )
             self._tokens.append(tokens)
+            self._heading_tokens.append(set(tokenise(provision.heading)))
             frequencies = Counter(tokens)
             self._frequencies.append(frequencies)
             self._document_frequency.update(frequencies.keys())
@@ -362,17 +426,29 @@ class BM25Index:
             if score > 0:
                 missing = sorted(set(terms) - set(matched))
                 coverage = len(matched) / (len(matched) + len(missing))
+                heading = self._heading_tokens[index]
+                hit_in_heading = {t for t in heading if any(t in self._forms(q) for q in terms)}
+                heading_coverage = len(hit_in_heading) / len(heading) if heading else 0.0
                 hits.append(
                     Hit(
                         provision=provision,
                         score=round(score, 6),
                         matched_terms=matched,
                         missing_terms=missing,
+                        heading_coverage=round(heading_coverage, 4),
+                        missing_qualifiers=sorted(set(missing) & QUALIFIERS),
                         ranking=round(score * coverage**self.coverage_weight, 6),
                     )
                 )
 
-        hits.sort(key=lambda h: -h.ranking)
+        # Coverage first, then the ranking, then how much the heading is about the
+        # question. A provision containing every word of the question is a better answer
+        # than one containing most of them, whatever the term weights say - and among
+        # provisions that cover it equally, the one the draftsman headed with those
+        # words is the one about them.
+        hits.sort(
+            key=lambda h: (-h.coverage, -h.ranking * (1 + self.heading_weight * h.heading_coverage))
+        )
         return hits[:limit]
 
 

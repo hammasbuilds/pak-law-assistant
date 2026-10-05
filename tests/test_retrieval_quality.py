@@ -237,3 +237,36 @@ def test_an_explicit_statute_argument_still_wins(assistant):
     # answering it from the PPC because the text said "Penal Code" would be the
     # argument being silently ignored.
     assert answer.refused or answer.passages[0].statute == "CONST"
+
+
+#: Questions an independent review used to get a confident wrong answer, kept as part of
+#: the benchmark so each stays fixed. The first group must refuse: the qualifier names a
+#: provision this corpus does not hold, and answering from the neighbouring offence is
+#: how "attempt to murder" returned the death penalty.
+MUST_REFUSE_QUALIFIED = [
+    "what is the punishment for attempt to murder?",
+    "what is the punishment for abetment of murder?",
+    "punishment for conspiracy to murder",
+]
+
+
+def test_a_neighbouring_offence_is_refused_not_offered(assistant):
+    for question in MUST_REFUSE_QUALIFIED:
+        answer = assistant.answer(question, as_of="2026-01-01")
+        assert answer.refused, f"{question!r} answered with {answer.passages[0].citation}"
+        assert answer.refusal_status == "different_offence"
+
+
+def test_a_rephrasing_of_the_same_question_still_finds_the_same_provision(assistant):
+    """The coordination factor was built for one phrasing; this is another.
+
+    "how is imprisonment for life reckoned in fractions of punishment?" borrows s.57's
+    heading words, so it was a weak test of the fix. This one shares none of them and
+    went to s.55 "Commutation of sentence of imprisonment for life" until coverage was
+    made to dominate the ranking.
+    """
+    answer = assistant.answer(
+        "imprisonment for life is reckoned as how many years", as_of="2026-01-01"
+    )
+    assert not answer.refused, answer.refusal_reason
+    assert answer.passages[0].citation == "Section 57 PPC"

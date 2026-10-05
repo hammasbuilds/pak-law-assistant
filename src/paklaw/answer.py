@@ -1,7 +1,8 @@
 """Grounded answering: cite a provision in force, or refuse.
 
-Four refusal conditions, and each one exists because the alternative is an answer that
-is confident and wrong.
+Seven refusal conditions, and each one exists because the alternative is an answer that
+is confident and wrong. Every refusal also carries a `refusal_status` token, so a caller
+branches on the kind rather than on prose that will be reworded.
 
   **No provision found**       — a plausible-sounding answer with no citation
   **Provision not in force**   — a correctly cited, authoritative-looking answer about
@@ -10,6 +11,15 @@ is confident and wrong.
                                  relevant one
   **Cited provision unknown**  — the user named a section; answering about a different
                                  one because it scored well is worse than saying so
+  **No Act named**             — "section 9" of what? A default could answer about the
+                                 wrong Act entirely
+  **Act not recognised**       — an Act WAS named and is not one this corpus holds.
+                                 "Section 302 of the Indian Penal Code" must not become
+                                 Section 302 PPC, which exists and says something else
+  **Different offence**        — the question carries a word that selects a neighbouring
+                                 provision. "Attempt to murder" is s.324, and answering
+                                 it with s.302 returns the death penalty for the wrong
+                                 offence
 
 The second is the one specific to law and the one general RAG systems have no concept
 of. A repealed section reads exactly like a live one. Nothing in the text says
@@ -57,6 +67,12 @@ class Answer:
     passages: list[Passage] = field(default_factory=list)
     refused: bool = False
     refusal_reason: str = ""
+    # WHY it refused, as a token a client can branch on. The reason is prose and will be
+    # reworded; a caller that wants to handle "not in force" differently from "nothing
+    # matched" had to match on that prose, which is a contract nobody agreed to.
+    # Empty when the question was answered. The names match check_citations' statuses
+    # where the two tools mean the same thing.
+    refusal_status: str = ""
     # Provisions the user cited that were found, but are not in force on the date asked.
     superseded: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -68,6 +84,7 @@ class Answer:
             "as_of": self.as_of,
             "refused": self.refused,
             "reason": self.refusal_reason,
+            "refusal_status": self.refusal_status,
             "citations": [p.citation for p in self.passages],
             "superseded": self.superseded,
             "warnings": self.warnings,
@@ -99,6 +116,13 @@ REFUSAL_UNKNOWN_CITATION = "the cited provision is not in this corpus"
 REFUSAL_NO_ACT = (
     "the cited provision names no Act, and guessing one could answer about the wrong law"
 )
+# An Act WAS named and is not one this corpus knows. Distinct from the above, because
+# "names no Act" is false of the input and the audit already draws the distinction:
+# answering about a Pakistani provision of the same number is the error.
+REFUSAL_FOREIGN_ACT = "the cited provision names an Act this corpus does not hold"
+# The question carries a word that selects a neighbouring offence, and the best
+# provision does not contain it. "Attempt to murder" is s.324, not s.302.
+REFUSAL_QUALIFIER = "the nearest provision is about a different offence"
 
 
 @dataclass
@@ -197,10 +221,16 @@ class LawAssistant:
             resolved: list[Passage] = []
             unknown: list[str] = []
             no_act: list[str] = []
+            # An Act named and not recognised, kept apart from no Act at all. The two
+            # look identical in `statute` and mean opposite things to a reader.
+            foreign_act: list[str] = []
 
             for citation in citations:
                 if not citation.statute:
-                    no_act.append(citation.pretty())
+                    if citation.named_statute:
+                        foreign_act.append(f"{citation.pretty()} ({citation.named_statute})")
+                    else:
+                        no_act.append(citation.pretty())
                     continue
                 cited_key = f"{citation.statute}:{citation.unit}:{citation.provision}"
                 key = self.corpus.resolve(cited_key)
@@ -244,6 +274,7 @@ class LawAssistant:
 
             if superseded:
                 result.refused = True
+                result.refusal_status = "not_in_force"
                 result.refusal_reason = f"{REFUSAL_NOT_IN_FORCE}: " + "; ".join(
                     f"{s['citation']} — {s['status']}" for s in superseded
                 )
@@ -251,11 +282,26 @@ class LawAssistant:
 
             if unknown:
                 result.refused = True
+                result.refusal_status = "unknown_provision"
                 result.refusal_reason = f"{REFUSAL_UNKNOWN_CITATION}: {', '.join(unknown)}"
+                return result
+
+            if foreign_act:
+                # An Act WAS named and is not one this corpus knows. Saying "names no
+                # Act" here was simply false of the input, and check_citations already
+                # drew the distinction - two tools reaching different conclusions about
+                # the same string is worse than either conclusion.
+                result.refused = True
+                result.refusal_status = "act_not_recognised"
+                result.refusal_reason = (
+                    f"{REFUSAL_FOREIGN_ACT}: {', '.join(foreign_act)}. A Pakistani "
+                    "provision of the same number is not the same provision."
+                )
                 return result
 
             if no_act:
                 result.refused = True
+                result.refusal_status = "no_act_named"
                 result.refusal_reason = f"{REFUSAL_NO_ACT}: {', '.join(no_act)}"
                 return result
 
@@ -275,19 +321,38 @@ class LawAssistant:
 
         if not hits:
             result.refused = True
+            result.refusal_status = "nothing_matched"
             result.refusal_reason = REFUSAL_NOTHING_FOUND
             return result
 
         if hits[0].score < self.min_score:
             result.refused = True
+            result.refusal_status = "weak_match"
             result.refusal_reason = (
                 f"{REFUSAL_WEAK} (best score {hits[0].score:.2f} below {self.min_score:.2f})"
+            )
+            return result
+
+        # A qualifier the provision does not contain means the question is about a
+        # neighbouring offence. Asked "punishment for attempt to murder", the corpus
+        # offered s.302 - "punished with death as qisas" - because "attempt" counted as
+        # one interchangeable word out of three. It is not interchangeable.
+        if hits[0].missing_qualifiers:
+            top = hits[0]
+            result.refused = True
+            result.refusal_status = "different_offence"
+            result.refusal_reason = (
+                f"{REFUSAL_QUALIFIER}: the question says "
+                f"{', '.join(repr(q) for q in top.missing_qualifiers)}, which "
+                f"{top.provision.citation().pretty()} does not. That word usually names a "
+                "different provision, and this corpus does not hold one matching it."
             )
             return result
 
         if hits[0].coverage <= self.min_coverage:
             top = hits[0]
             result.refused = True
+            result.refusal_status = "weak_match"
             result.refusal_reason = (
                 f"{REFUSAL_WEAK}: the nearest provision contains {len(top.matched_terms)} of "
                 f"the question's {len(top.matched_terms) + len(top.missing_terms)} content "
@@ -297,7 +362,13 @@ class LawAssistant:
 
         # Passages after the first are held to the same bar, or a strong first answer
         # carries two unrelated ones in with it.
-        kept = [h for h in hits if h.coverage > self.min_coverage and h.score >= self.min_score]
+        kept = [
+            h
+            for h in hits
+            if h.coverage > self.min_coverage
+            and h.score >= self.min_score
+            and not h.missing_qualifiers
+        ]
         result.passages = [self._to_passage(h, as_of_date) for h in kept]
         return result
 

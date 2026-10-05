@@ -131,7 +131,24 @@ _REFUSAL = {
     "refused": {"type": "boolean"},
     "refusal_reason": {
         "type": ["string", "null"],
-        "description": "Why no answer is given. A refusal is an answer; it is not an error.",
+        "description": "Why no answer is given, in prose. A refusal is an answer; it is "
+        "not an error.",
+    },
+    "refusal_status": {
+        "type": ["string", "null"],
+        "enum": [
+            "not_in_force",
+            "unknown_provision",
+            "act_not_recognised",
+            "no_act_named",
+            "nothing_matched",
+            "weak_match",
+            "different_offence",
+            None,
+        ],
+        "description": "The SAME refusal, as a token to branch on. `refusal_reason` is "
+        "prose and will be reworded; branch on this. Names match check_citations' "
+        "statuses where the two tools mean the same thing. Null when answered.",
     },
 }
 
@@ -773,6 +790,7 @@ class LawServer:
             "as_of": answer.as_of,
             "refused": answer.refused,
             "refusal_reason": answer.refusal_reason or None,
+            "refusal_status": answer.refusal_status or None,
             "passages": [
                 {
                     "citation": p.citation,
