@@ -2,8 +2,9 @@
 
 Two jobs, both of which are where a real corpus goes wrong.
 
-**Splitting an Act into provisions** is `split.split_act`, which accounts for every
-character it does not import; cleaning a source's PDF or HTML first is `sources`.
+**Splitting an Act into provisions** is `split.split_act`, which reports every span
+it does not import and its size - not a character-exact balance, but enough to see
+what was dropped; cleaning a source's PDF or HTML first is `sources`.
 
 **Recording amendments.** A substitution is two edits that must agree: the live version
 ends on a date and the new one begins on the same date. Done by hand, one of them gets
@@ -264,6 +265,12 @@ def summarise(report: dict) -> str:
     ):
         if report.get(key):
             lines.append(f"  {len(report[key])} {what}")
+    for found in report.get("swallowed_headings", ()):
+        numbers = ", ".join(found["appears_to_contain"])
+        lines.append(
+            f"  {found['provision']} appears to contain {numbers} - they are in the text "
+            "and not in the contents, so they were not imported as provisions"
+        )
     return "\n".join(lines)
 
 

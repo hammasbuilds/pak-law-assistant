@@ -265,3 +265,46 @@ def test_spans_cover_the_text_without_overlapping():
     for (_, _, end), (_, next_start, _) in zip(spans, spans[1:], strict=False):
         assert end == next_start
     assert spans[-1][2] == len(text)
+
+
+def test_a_provision_holding_nine_others_is_reported():
+    """The accounting only ever ran one way.
+
+    `missing_from_contents` catches a contents entry with no body. Nothing caught a
+    body with no contents entry - so when the contents stop at s.57 and the text runs
+    on to s.66, nine sections were folded into s.57's body and the import reported no
+    problem. The consequence is not cosmetic: a provision holding nine others matches
+    almost any question about punishment, and wins on coverage.
+    """
+    text = strip_stars(pakistan_code(read("ppc_pakistan_code_pp39-41.txt")).text)
+    rows, report = split_act(text, statute="PPC", in_force_from="2016-01-01")
+    assert report["swallowed_headings"] == [
+        {
+            "provision": "section 57",
+            "appears_to_contain": ["58", "59", "60", "61", "62", "63", "64", "65", "66"],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "fixture,reader",
+    [
+        ("constitution_pakistan_code_pp18-20.txt", "pakistan-code"),
+        ("ppc_pakistani_org_ss300-303.html", "pakistani-org"),
+    ],
+)
+def test_a_well_formed_import_reports_nothing_swallowed(fixture, reader):
+    """The check has to be quiet on the sources that are fine, or it is noise.
+
+    A statute cites earlier sections constantly ("specified in Section 304"), so only
+    an ascending run of numbers greater than the provision's own counts.
+    """
+    raw = read(fixture)
+    if reader == "pakistan-code":
+        text = strip_stars(pakistan_code(raw).text)
+        unit, statute = "article", "CONST"
+    else:
+        text, _ = pakistani_org(raw)
+        unit, statute = "section", "PPC"
+    _, report = split_act(text, statute=statute, in_force_from="1900-01-01", unit=unit)
+    assert report["swallowed_headings"] == []

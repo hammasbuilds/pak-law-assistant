@@ -60,7 +60,7 @@ flowchart LR
     C --> T{"was this provision<br/>in force at the relevant date?"}
     T -->|"repealed"| X["REFUSE"]
     T -->|"in force"| G["citation-grounded answer"]
-    G --> F{"seven refusal conditions"}
+    G --> F{"eight refusal conditions"}
     F -->|"any triggered"| X
     F -->|"none"| A["answer, with citations"]
 
@@ -222,7 +222,7 @@ each tool's structured result matches the `outputSchema` it declares.
 
 | Tool | Use it for |
 |---|---|
-| `answer_question` | "what does the law say about X *on this date*": provision text with citations, or one of the seven refusals |
+| `answer_question` | "what does the law say about X *on this date*": provision text with citations, or one of the eight refusals |
 | `check_citations` | **auditing a draft** (a brief, a notice, or a model's own answer). Every citation gets a status for the date: `in_force`, `amended_since`, `not_in_force`, `not_yet_in_force`, `unknown_provision`, `no_act_named`, `statute_not_loaded`, `not_checkable` or `before_record` (dated before the corpus starts recording that statute), plus its character offset |
 | `provision_history` | "when did section 20 change?": every version, how each one ended, and the instrument on each side |
 | `compare_versions` | "what did the amendment do?": a word-level diff between the text on two dates |
@@ -431,11 +431,11 @@ CI badge are the record. What the suite covers:
 
 | Area | What it holds |
 |---|---|
-| the library | retrieval, answering, the seven refusal conditions |
+| the library | retrieval, answering, the eight refusal conditions |
 | the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included |
 | corpus building | the importer against real statute layouts from two public sources |
 | record coverage | what the corpus does and does not claim to know |
-| retrieval quality | 17 questions in a person's words over 26 real provisions, scored for right, **wrong** and refused — the wrong count is the one that must stay at zero |
+| retrieval quality | 17 questions in a person's words over 26 real provisions, plus **34 paraphrases of the same questions** and **10 real offences the corpus does not hold**. Scored for right, **wrong** and refused: 16 right of 17, 25 right and 1 wrong of 34 paraphrased, and 10 of 10 refused. The paraphrases exist because a benchmark of 17 sentences is a claim about 17 sentences — an independent review re-asked the same corpus in its own words and got 8 confident wrong answers |
 | regressions | one per defect an independent review reproduced, each pinned so it cannot come back quietly |
 
 Run them with

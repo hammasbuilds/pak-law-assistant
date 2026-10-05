@@ -1,6 +1,6 @@
 """Grounded answering: cite a provision in force, or refuse.
 
-Seven refusal conditions, and each one exists because the alternative is an answer that
+Eight refusal conditions, and each one exists because the alternative is an answer that
 is confident and wrong. Every refusal also carries a `refusal_status` token, so a caller
 branches on the kind rather than on prose that will be reworded.
 
@@ -20,6 +20,10 @@ branches on the kind rather than on prose that will be reworded.
                                  provision. "Attempt to murder" is s.324, and answering
                                  it with s.302 returns the death penalty for the wrong
                                  offence
+  **Subject not in corpus**    — a word of the question appears nowhere in the corpus in
+                                 any form. "Dacoity" is absent from thirteen sections of
+                                 the Penal Code, and the other two words of "the sentence
+                                 for dacoity with murder" were enough to open the gate
 
 The second is the one specific to law and the one general RAG systems have no concept
 of. A repealed section reads exactly like a live one. Nothing in the text says
@@ -52,6 +56,12 @@ class Passage:
     in_force_from: str
     in_force_to: str | None
     score: float
+    #: What the order was actually decided by. `score` is BM25 alone and is NOT
+    #: monotonic down this list - a passage below can score higher - so a client that
+    #: sorted on it reordered the answer. The sort is (coverage, ranking); both are
+    #: here, so the order a client is given can be checked against numbers it has.
+    ranking: float
+    coverage: float
     matched_terms: str
     status_note: str = ""
 
@@ -123,6 +133,9 @@ REFUSAL_FOREIGN_ACT = "the cited provision names an Act this corpus does not hol
 # The question carries a word that selects a neighbouring offence, and the best
 # provision does not contain it. "Attempt to murder" is s.324, not s.302.
 REFUSAL_QUALIFIER = "the nearest provision is about a different offence"
+REFUSAL_NOT_IN_CORPUS = (
+    "the question names something this corpus has no provision about, in any form"
+)
 
 
 @dataclass
@@ -162,6 +175,8 @@ class LawAssistant:
             in_force_from=p.in_force_from.isoformat(),
             in_force_to=p.in_force_to.isoformat() if p.in_force_to else None,
             score=hit.score,
+            ranking=hit.ranking,
+            coverage=round(hit.coverage, 4),
             matched_terms=hit.why(),
             status_note=p.status_note(as_of),
         )
@@ -353,6 +368,22 @@ class LawAssistant:
             )
             return result
 
+        # A word the corpus has never seen, in any form, anywhere. That is a stronger
+        # signal than a word this provision happens to lack: asked for the sentence for
+        # "dacoity with murder", a corpus of thirteen sections answered s.302, because
+        # two of its three words were covered and the one that named the offence was
+        # not. The honest answer is that the corpus does not contain dacoity.
+        if hits[0].unknown_terms:
+            top = hits[0]
+            result.refused = True
+            result.refusal_status = "subject_not_in_corpus"
+            result.refusal_reason = (
+                f"{REFUSAL_NOT_IN_CORPUS}: "
+                f"{', '.join(repr(t) for t in top.unknown_terms)}. The nearest provision "
+                f"is {top.provision.citation().pretty()}, which is about something else."
+            )
+            return result
+
         if hits[0].coverage <= self.min_coverage:
             top = hits[0]
             result.refused = True
@@ -389,7 +420,10 @@ class LawAssistant:
             c for c in parse(citation_text, statutes=self.aliases) if c.kind == "statutory"
         ]
         if not citations:
-            return {"error": "no statutory citation found in the request"}
+            return {
+                "error": "no statutory citation found in the request",
+                "refusal_status": "no_citation_found",
+            }
 
         citation = citations[0]
         resolved_statute = citation.statute or statute or ""
@@ -397,7 +431,11 @@ class LawAssistant:
         history = self.corpus.history(key)
 
         if not history:
-            return {"citation": citation.pretty(), "error": REFUSAL_UNKNOWN_CITATION}
+            return {
+                "citation": citation.pretty(),
+                "error": REFUSAL_UNKNOWN_CITATION,
+                "refusal_status": "unknown_provision",
+            }
 
         return {
             "citation": citation.pretty(),

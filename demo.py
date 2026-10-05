@@ -100,9 +100,13 @@ ASKS = [
     ),
 ]
 
+corpus = build()
+provisions = len({(p.statute, p.unit, p.number) for p in corpus.provisions})
+versions = len(corpus.provisions)
+
 print("INPUT")
 print(
-    f"   corpus             {len(build().provisions)} provisions "
+    f"   corpus             {provisions} provisions, {versions} versions "
     "(PECA s.20 twice: pre- and post-2022)"
 )
 for q, as_of, _note in ASKS:

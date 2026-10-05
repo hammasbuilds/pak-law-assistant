@@ -132,6 +132,15 @@ _PAGING = {
         "description": "Offset of the next page. Absent on the last page.",
     },
 }
+_WARNINGS = {
+    "warnings": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Coverage limits that bear on this answer, such as a statute the "
+        "question named that the corpus does not hold, or a date range taken in the "
+        "order it was meant rather than the order it was given.",
+    },
+}
 _REFUSAL = {
     "refused": {"type": "boolean"},
     "refusal_reason": {
@@ -149,6 +158,7 @@ _REFUSAL = {
             "nothing_matched",
             "weak_match",
             "different_offence",
+            "subject_not_in_corpus",
             None,
         ],
         "description": "The SAME refusal, as a token to branch on. `refusal_reason` is "
@@ -209,7 +219,21 @@ _PASSAGE = {
         },
         "status_note": {"type": ["string", "null"]},
         "matched": {"type": ["string", "null"], "description": "Why this one was returned."},
-        "score": {"type": ["number", "null"]},
+        "score": {
+            "type": ["number", "null"],
+            "description": "BM25 alone. NOT the sort order: a later passage can score "
+            "higher. Sort on (coverage, ranking) or leave the order as given.",
+        },
+        "coverage": {
+            "type": ["number", "null"],
+            "description": "Share of the question's content words this provision contains. "
+            "The first sort key.",
+        },
+        "ranking": {
+            "type": ["number", "null"],
+            "description": "The second sort key: score weighted by how much of the "
+            "question the provision's heading answers.",
+        },
     },
     "required": ["citation", "text", "statute", "in_force_from"],
 }
@@ -220,7 +244,15 @@ _VERSION = {
         "to": {"type": ["string", "null"]},
         "manner": {"type": ["string", "null"], "description": "substituted, repealed, omitted."},
         "amended_by": {"type": ["string", "null"]},
+        "enacted_by": {
+            "type": ["string", "null"],
+            "description": "The instrument that brought this version into force.",
+        },
         "heading": {"type": ["string", "null"]},
+        "superseded_by": {
+            "type": ["string", "null"],
+            "description": "The instrument that replaced this version, when one is recorded.",
+        },
         "text": {"type": "string", "description": "Only when with_text was true."},
     },
     "required": ["from"],
@@ -232,6 +264,11 @@ _SIDE = {
         "in_force": {"type": "boolean"},
         "in_force_from": {"type": "string"},
         "in_force_to": {"type": ["string", "null"]},
+        "status": {
+            "type": ["string", "null"],
+            "description": "How this side stood on its date: in force, not yet in force, "
+            "or no longer in force.",
+        },
         "text": {"type": "string"},
     },
     "required": ["date", "in_force"],
@@ -288,12 +325,7 @@ TOOLS: list[dict[str, Any]] = [
                     "required": ["citation"],
                 },
             },
-            "warnings": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Coverage limits that bear on this answer, such as a "
-                "statute the question named that the corpus does not hold.",
-            },
+            **_WARNINGS,
         },
     ),
     _tool(
@@ -396,6 +428,7 @@ TOOLS: list[dict[str, Any]] = [
         output={
             "citation": {"type": "string"},
             **_REFUSAL,
+            **_WARNINGS,
             "versions": {"type": "integer"},
             "currently_in_force": {"type": "boolean"},
             "history": {"type": "array", "items": _VERSION, "description": "Oldest first."},
@@ -418,6 +451,7 @@ TOOLS: list[dict[str, Any]] = [
         output={
             "citation": {"type": "string"},
             **_REFUSAL,
+            **_WARNINGS,
             "before": _SIDE,
             "after": _SIDE,
             "changes": {
@@ -521,6 +555,7 @@ TOOLS: list[dict[str, Any]] = [
                 },
             },
             **_PAGING,
+            **_WARNINGS,
         },
         output_required=["events", "from", "statute", "to", "total"],
     ),
@@ -712,11 +747,18 @@ def _page(result: dict, field: str, offset: int, limit: int) -> dict:
 
 
 def _refusal(result: dict) -> dict:
-    """The library's {"error": ...} as the same refusal shape answer_question uses."""
+    """The library's {"error": ...} as the same refusal shape answer_question uses.
+
+    `refusal_status` comes from the library with the error, because the schema tells
+    callers to branch on it and this function used to drop it: every refusal from
+    `provision_history` and `compare_versions` declared the key and omitted it, so the
+    one instruction the schema gives was impossible to follow.
+    """
     if "error" in result:
         reason = result.pop("error")
-        return {"refused": True, "refusal_reason": reason, **result}
-    return {"refused": False, **result}
+        status = result.pop("refusal_status", None)
+        return {"refused": True, "refusal_reason": reason, "refusal_status": status, **result}
+    return {"refused": False, "refusal_status": None, **result}
 
 
 def _date(arguments: dict, name: str) -> dt.date:
@@ -822,6 +864,8 @@ class LawServer:
                     # "cited" when the question named it: a lookup, not a ranking.
                     "matched": p.matched_terms,
                     "score": _finite(p.score),
+                    "coverage": _finite(p.coverage),
+                    "ranking": _finite(p.ranking),
                 }
                 for p in answer.passages
             ],
@@ -910,8 +954,14 @@ class LawServer:
                 if not c.statute:
                     entry["note"] = "no Act named; pass default_statute if the context says"
             found.append(entry)
-        result = {"count": len(found), "citations": found}
-        return _page(result, "citations", _offset(arguments), CITATION_LIMIT)
+        result = {"citations": found}
+        result = _page(result, "citations", _offset(arguments), CITATION_LIMIT)
+        # After the cut, not before it. `count` is declared as "citations on this page"
+        # and was set to the whole total, so 600 citations reported count 600 beside 500
+        # citations - two numbers for the same thing, one of them wrong. `total` is the
+        # whole, and it comes from `_page`.
+        result["count"] = len(result["citations"])
+        return result
 
     def corpus_info(self, arguments: dict) -> dict:
         provisions = list(self.corpus)

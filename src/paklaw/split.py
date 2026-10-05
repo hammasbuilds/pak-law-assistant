@@ -1,4 +1,11 @@
-"""Splitting an Act's text into provisions, and accounting for every character.
+"""Splitting an Act's text into provisions, and reporting what was left behind.
+
+The report names every span not imported and its size, so a reader can see what was
+dropped and decide whether it mattered. It does not balance to the character: on the
+Penal Code fixture 6,263 characters are imported and 423 are reported as skipped out
+of 7,402, and the rest is whitespace, headings' own numbers, and the page furniture
+`sources` removes before this runs. The guarantee is that no *provision* is lost
+silently, not that every character is in one column or the other.
 
 Real statute text comes in more than one layout, and the importer has to survive all of
 them without silently losing law:
@@ -101,6 +108,15 @@ def _fold(text: str) -> str:
 
 
 TOO_LONG = 20_000
+
+# A provision's own body, carrying what look like LATER provisions' headings: "…twenty-
+# five years. 58. [Offenders sentenced to transportation…] Omitted by…". That happens
+# when the contents list the importer takes its numbers from stops before the body does,
+# and the result is one provision holding nine - which nothing reported, because the
+# accounting only ever ran the other way. `missing_from_contents` catches a contents
+# entry with no body; this catches a body with no contents entry, and the consequence is
+# worse: a blob that matches almost any question wins retrieval on coverage.
+_SWALLOWED = re.compile(r"(?<![\w.(-])(\d{1,4}[A-Z]?)\.\s+(?=[A-Z\[])")
 
 
 @dataclass
@@ -435,6 +451,30 @@ def _layout(text: str) -> _Layout:
     return _Layout(toc, toc_order, toc_start, toc_end, candidates, chain, unlisted)
 
 
+def _buried_numbers(body: str, number: str) -> list[str]:
+    """Numbers in `body` that look like later provisions' headings, in order.
+
+    Only numbers greater than this provision's are counted, and only in ascending
+    order: a statute cites earlier sections constantly ("specified in Section 304"),
+    and a citation is not a heading. A run of increasing numbers each followed by a
+    capitalised title is.
+    """
+    try:
+        here = int("".join(c for c in number if c.isdigit()) or 0)
+    except ValueError:
+        return []
+    found: list[str] = []
+    last = here
+    for match in _SWALLOWED.finditer(body):
+        candidate = match.group(1)
+        digits = int("".join(c for c in candidate if c.isdigit()))
+        if digits <= last:
+            continue
+        found.append(candidate)
+        last = digits
+    return found
+
+
 def split_act(
     text: str,
     *,
@@ -484,6 +524,7 @@ def split_act(
     rows: list[dict] = []
     dropped: list[str] = []
     too_long_found: list[dict] = []
+    swallowed: list[dict] = []
     chapter = (
         f"{preamble_chapters[-1][0]} {preamble_chapters[-1][1]}".strip()
         if preamble_chapters
@@ -530,6 +571,9 @@ def split_act(
             continue
         if len(body) > too_long:
             too_long_found.append({"provision": f"{unit} {number}", "characters": len(body)})
+        buried = _buried_numbers(body, number)
+        if buried:
+            swallowed.append({"provision": f"{unit} {number}", "appears_to_contain": buried})
         rows.append(
             {
                 "statute": statute,
@@ -569,5 +613,6 @@ def split_act(
             f"{unit} {n}" for n in toc_order if n not in seen and _LISTED_AS_GONE.search(toc[n])
         ],
         "too_long": too_long_found,
+        "swallowed_headings": swallowed,
     }
     return rows, report

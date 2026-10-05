@@ -24,6 +24,7 @@ values so that a regression fails and an improvement does not have to edit them.
 
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 import pytest
@@ -320,3 +321,193 @@ def test_the_ranking_parameters_are_reachable_without_editing_the_source():
     # the answer changes.
     assert default.answer(question, as_of="2026-01-01").passages[0].citation == "Article 7 CONST"
     assert tuned.answer(question, as_of="2026-01-01").passages[0].citation != "Article 7 CONST"
+
+
+# --- the same questions, asked differently ---------------------------------------------
+#
+# An independent review's finding, and it was right: 17 sentences with MAX_WRONG = 0 is
+# a claim about 17 sentences. It re-asked the same corpus in its own words and got 8
+# confident wrong answers, including s.302 - "punished with death as qisas" - for
+# qatl-i-khata, which is s.322 and punishable by diyat.
+#
+# Two phrasings per provision, written against the provisions rather than against the
+# retriever, plus the offences a reader would most plausibly confuse with the ones that
+# are loaded. The must-refuse list is the half that matters: this corpus holds thirteen
+# sections of the Penal Code and seven Articles, so every offence below has a plausible
+# neighbour here, and answering from the neighbour is the failure the repository exists
+# to prevent.
+
+PARAPHRASES: list[tuple[str, str]] = [
+    ("what sentence does a murderer get?", "Section 302 PPC"),
+    ("punishment for qatl-i-amd", "Section 302 PPC"),
+    ("what happens to someone who kills under ikrah?", "Section 303 PPC"),
+    ("qatl committed under compulsion", "Section 303 PPC"),
+    ("he meant to kill one man and killed another", "Section 301 PPC"),
+    ("causing the death of a person whose death was not intended", "Section 301 PPC"),
+    ("can the government commute a death sentence?", "Section 54 PPC"),
+    ("may a sentence of death be changed to something else?", "Section 54 PPC"),
+    ("can life imprisonment be commuted?", "Section 55 PPC"),
+    ("commuting a life sentence to a term of years", "Section 55 PPC"),
+    ("does animal include every living creature?", "Section 47 PPC"),
+    ("the meaning of animal in this Code", "Section 47 PPC"),
+    ("what counts as a vessel?", "Section 48 PPC"),
+    ("the meaning of the word vessel", "Section 48 PPC"),
+    ("what is good faith?", "Section 52 PPC"),
+    ("when is something done in good faith?", "Section 52 PPC"),
+    ("is a solemn affirmation an oath?", "Section 51 PPC"),
+    ("the meaning of oath in this Code", "Section 51 PPC"),
+    ("what penalties does the Code provide?", "Section 53 PPC"),
+    ("list of punishments under the Penal Code", "Section 53 PPC"),
+    ("imprisonment for life is equivalent to how long?", "Section 57 PPC"),
+    ("fractions of terms of punishment", "Section 57 PPC"),
+    ("what is the state religion of Pakistan?", "Article 2 CONST"),
+    ("is Pakistan an Islamic state by its Constitution?", "Article 2 CONST"),
+    ("what shall Pakistan be known as?", "Article 1 CONST"),
+    ("the Republic and its territories", "Article 1 CONST"),
+    ("what is high treason?", "Article 6 CONST"),
+    ("abrogating the Constitution by force", "Article 6 CONST"),
+    ("a law repugnant to fundamental rights is void", "Article 8 CONST"),
+    ("laws inconsistent with the rights conferred by this Chapter", "Article 8 CONST"),
+    ("the State shall eliminate exploitation", "Article 3 CONST"),
+    ("elimination of all forms of exploitation", "Article 3 CONST"),
+    ("the basic duty of every citizen", "Article 5 CONST"),
+    ("obedience to the Constitution and law", "Article 5 CONST"),
+]
+
+#: Real offences with no provision in this corpus, each a near neighbour of one that is
+#: here. Several were answered confidently before: qatl-i-khata and attempt to murder
+#: both returned s.302.
+MUST_REFUSE: list[str] = [
+    "what is the punishment for culpable homicide not amounting to murder?",
+    "what is the punishment for qatl-i-khata?",
+    "what is the punishment for attempt to murder?",
+    "what is the sentence for dacoity with murder?",
+    "what is the punishment for theft?",
+    "what is the punishment for robbery?",
+    "what is the punishment for rape?",
+    "what is the punishment for kidnapping?",
+    "what is the punishment for criminal breach of trust?",
+    "what is the punishment for qatl shibh-i-amd?",
+]
+
+#: Measured, not chosen: 25 right, 1 wrong, 8 refused of 34, and 10 of 10 refused.
+MIN_PARAPHRASE_RIGHT = 25
+MAX_PARAPHRASE_WRONG = 1
+
+#: The one wrong answer, named. A count on its own would let a new wrong answer in as
+#: soon as an old one was fixed, which is how a budget becomes a ratchet.
+KNOWN_WRONG = {
+    "is Pakistan an Islamic state by its Constitution?": "Article 1 CONST",
+}
+
+
+def test_the_same_questions_asked_differently(assistant):
+    """Recall is allowed to fall on a paraphrase. Precision is not."""
+    right, wrong, refused = 0, [], []
+    for question, citation in PARAPHRASES:
+        answer = assistant.answer(question, as_of="2026-01-01")
+        if answer.refused:
+            refused.append(question)
+        elif answer.passages[0].citation == citation:
+            right += 1
+        else:
+            wrong.append((question, answer.passages[0].citation))
+
+    assert right >= MIN_PARAPHRASE_RIGHT, f"right {right}; refused {refused}; wrong {wrong}"
+    assert len(wrong) <= MAX_PARAPHRASE_WRONG, wrong
+    for question, got in wrong:
+        assert KNOWN_WRONG.get(question) == got, f"a NEW wrong answer: {question} -> {got}"
+
+
+def test_an_offence_this_corpus_does_not_hold_is_refused(assistant):
+    """The half that matters. Each of these has a plausible neighbour loaded, and
+    answering from the neighbour is a citation a lawyer would act on."""
+    answered = {}
+    for question in MUST_REFUSE:
+        answer = assistant.answer(question, as_of="2026-01-01")
+        if not answer.refused:
+            answered[question] = answer.passages[0].citation
+    assert answered == {}, answered
+
+
+def test_the_species_of_qatl_are_not_synonyms():
+    """The vocabulary bridge, crossed twice, made them one word.
+
+    `khata` reached `manslaughter` and `manslaughter` reached `qatl`, so the single
+    term separating s.322 (diyat) from s.302 (death as qisas) matched s.302.
+    """
+    from paklaw.retrieve import expand
+
+    assert "qatl" not in expand("khata")
+    assert "khata" not in expand("amd")
+    assert "amd" not in expand("khata")
+    # The bridge itself still works in the direction it was built for.
+    assert "qatl" in expand("murder")
+    assert "ikrah" in expand("duress")
+
+
+@pytest.mark.parametrize(
+    "asked,in_the_statute",
+    [
+        ("denote", "denotes"),  # the question nominalises, the statute conjugates
+        ("transmitting", "transmits"),  # English doubles the consonant, the statute does not
+        ("elimination", "eliminate"),
+        ("penalties", "penalty"),
+        ("murderer", "murder"),
+        ("sections", "section"),
+        ("punishments", "punished"),
+        ("kills", "killing"),
+    ],
+)
+def test_the_two_spellings_of_one_word_meet(asked, in_the_statute):
+    """Each pair was a question this corpus could answer and did not."""
+    from paklaw.retrieve import _stems
+
+    assert _stems(asked) & _stems(in_the_statute), (asked, in_the_statute)
+
+
+def test_a_word_the_corpus_has_never_seen_is_not_a_near_miss(assistant):
+    """ "dacoity" is absent from thirteen sections of the Penal Code. Two of the three
+    words in "the sentence for dacoity with murder" were covered, so the gate opened
+    and s.302 came back - a confident citation for an offence the corpus does not hold.
+    """
+    answer = assistant.answer("what is the sentence for dacoity with murder?", as_of="2026-01-01")
+    assert answer.refused
+    assert answer.refusal_status == "subject_not_in_corpus"
+    assert "dacoity" in answer.refusal_reason
+
+
+def test_an_ordinary_english_word_is_not_treated_as_the_subject(assistant):
+    """The same rule, not firing. A statute book contains no "many" and no "count",
+    and s.57 answers this exactly."""
+    answer = assistant.answer(
+        "how many years does imprisonment for life count as?", as_of="2026-01-01"
+    )
+    assert not answer.refused, answer.refusal_reason
+
+
+def test_a_query_term_is_expanded_once_not_once_per_provision(monkeypatch):
+    """`_forms` sat inside the per-document loop and its value depends only on the term.
+
+    One five-word question over 10,000 provisions called it 99,174 times and spent four
+    fifths of the query there - 0.78s per answer, on the headline tool. Counting calls
+    rather than timing them, because a clock on CI measures the CI box.
+    """
+    import paklaw.retrieve as retrieve
+
+    corpus = build_checked(_corpus_rows(), source="fixtures")
+    law = LawAssistant(corpus=corpus)
+
+    calls: list[str] = []
+    real = retrieve.expand
+    monkeypatch.setattr(retrieve, "expand", lambda term: calls.append(term) or real(term))
+
+    question = "what is the punishment for murder committed under duress"
+    law.answer(question, as_of="2026-01-01")
+
+    provisions = len(corpus.as_of(dt.date(2026, 1, 1)))
+    assert provisions > 10, provisions
+    # Once per distinct term, not once per (term x provision). The margin is for the
+    # heading pass, which asks about the same terms again.
+    assert len(calls) <= 3 * len(set(calls)), (len(calls), len(set(calls)))
+    assert len(calls) < provisions, (len(calls), provisions)

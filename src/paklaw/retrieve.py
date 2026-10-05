@@ -143,12 +143,27 @@ STATUTE_VOCABULARY: dict[str, tuple[str, ...]] = {
     "adultery": ("zina",),
     "retaliation": ("qisas",),
     "bloodmoney": ("diyat",),
-    "blood": ("diyat",),
     "discretionary": ("tazir",),
     "hurt": ("jurh",),
     "defamation": ("qazf",),
-    "intoxication": ("hadd",),
 }
+# Two entries were removed here, by the table's own rule. "blood" -> diyat matched
+# "blood relative" and "blood sample"; "intoxication" -> hadd was worse, because hadd
+# is a category of punishment that applies to zina, theft and qazf as well, so every
+# hadd question was scoped to intoxication. Neither was the statute's term for the
+# concept the English word names, which is the only thing this table is allowed to hold.
+# Two English words for one thing in the Code's own register, which is a different
+# table from the one above: nothing here is a statute term, and nothing here changes
+# which offence a question is about. A penal code provides *punishments* and a court
+# passes a *sentence*, and a person uses whichever they know. Without this, "what is
+# the sentence for murder?" was answered with s.54, "Commutation of sentence of death"
+# — which contains both words and is about neither.
+ENGLISH_VARIANTS: dict[str, tuple[str, ...]] = {
+    "sentence": ("punishment",),
+    "punishment": ("sentence",),
+    "penalty": ("punishment", "sentence"),
+}
+
 # Read the other way too, so a question in the statute's own terms still finds the
 # English wording of a heading.
 _VOCABULARY_REVERSE: dict[str, tuple[str, ...]] = {}
@@ -186,13 +201,115 @@ QUALIFIERS = frozenset(
         "involuntary",
         "mitigated",
         "aggravated",
+        # The species of qatl, which are three different offences with three different
+        # punishments: amd is s.302 (death as qisas), shibh-i-amd s.316, khata s.322
+        # (diyat). The word naming the species is the entire question, exactly as
+        # "attempt" is - and sharing the word "qatl" is what made them look alike.
+        "amd",
+        "khata",
+        "shibh",
+        # Likewise the mode of punishment and the ground of the offence: a question
+        # about qisas is not answered by a provision that only offers tazir, and one
+        # about ikrah is not answered by a provision that never mentions it.
+        "qisas",
+        "tazir",
+        "diyat",
+        "ikrah",
+    }
+)
+
+# Words whose absence from a statute book says nothing. A corpus that has never seen
+# "dacoity" cannot answer a question about dacoity - that is a real signal, and the
+# strongest one available for an offence the corpus simply does not contain. A corpus
+# that has never seen "many" is just a corpus: the word is not what the question is
+# about. Without this distinction the rule refuses "how many years does imprisonment
+# for life count as?", which s.57 answers exactly.
+NOT_A_SUBJECT = frozenset(
+    {
+        "many",
+        "much",
+        "count",
+        "counts",
+        "long",
+        "often",
+        "exactly",
+        "actually",
+        "really",
+        "mean",
+        "means",
+        "happens",
+        "called",
+        "regarding",
+        "concerning",
+        "about",
+        # Ordinary English that carries a question without naming anything in a statute
+        # book. Deliberately NOT the legal near-misses: "use", "give", "make", "take"
+        # and "person" all do real work in a penal code ("use of force", "given in good
+        # faith", "made in good faith"), so they are absent from this list even though
+        # adding them would answer more questions. A word earns a place here by being
+        # impossible to legislate about, not by being inconvenient.
+        "get",
+        "gets",
+        "got",
+        "getting",
+        "do",
+        "does",
+        "did",
+        "doing",
+        "someone",
+        "somebody",
+        "something",
+        "anything",
+        "anyone",
+        "everyone",
+        "happen",
+        "happened",
+        "meant",
+        "else",
+        "instead",
+        "whether",
     }
 )
 
 # Conservative English suffixes. "punishment" must reach "punished", which is the single
 # most common mismatch in a penal code: the question nominalises what the statute
 # conjugates. Only applied to ASCII words long enough that the stem stays a word.
-_SUFFIXES = ("ments", "ment", "ingly", "ing", "edly", "ed", "es", "s")
+#
+# A bare "e" is last and does real work: the statute conjugates ("the word 'vessel'
+# denotes") and the question nominalises ("what does the word vessel denote"). Stripping
+# only "es" reduced the statute's word to "denot" and left the question's at "denote",
+# so the two never met. Nothing ends in both "es" and "e", so adding it changes no
+# existing stem, and the minimum length keeps "the" and "be" whole.
+#
+# Longest first, and one suffix per word: "sections" must take "ions" before "s" or it
+# stops at "section" and never meets "sect". The nominalisations are what a question is
+# built from and the conjugations are what a statute is built from - "elimination of
+# exploitation" against "the State shall eliminate", "penalties" against "penalty",
+# "murderer" against "murder" - and each pair that does not meet is a question the
+# corpus can answer and does not.
+_SUFFIXES = (
+    "ations",
+    "ation",
+    "ements",
+    "ement",
+    "ments",
+    "ment",
+    "ingly",
+    "ing",
+    "edly",
+    "ed",
+    "ions",
+    "ion",
+    "ies",
+    "ers",
+    "er",
+    "ors",
+    "or",
+    "es",
+    "s",
+    "y",
+    "e",
+)
 
 
 def _stems(term: str) -> set[str]:
@@ -200,11 +317,33 @@ def _stems(term: str) -> set[str]:
     out = {term}
     if not term.isascii() or not term.isalpha():
         return out
+    # Every suffix that fits, not the first. "elimination" strips "ation" to "elimin"
+    # and "ion" to "eliminat", and it is the second that meets "eliminate"; stopping at
+    # the first kept the pair apart. The extra stems only ever add a way for two
+    # spellings of one word to meet - a stem that matches nothing costs nothing.
     for suffix in _SUFFIXES:
         if term.endswith(suffix) and len(term) - len(suffix) >= 4:
-            out.add(term[: -len(suffix)])
-            break
+            stem = term[: -len(suffix)]
+            out.add(stem)
+            # English doubles the final consonant before -ing and -ed, and the statute
+            # uses the undoubled form: "transmitting" strips to "transmitt" while
+            # "transmits" strips to "transmit", and the two never met. Both forms are
+            # kept rather than one chosen, because the shortened form of a word that
+            # genuinely ends in a double letter ("pass" -> "pas") matches nothing.
+            if len(stem) >= 4 and stem[-1] == stem[-2]:
+                out.add(stem[:-1])
     return out
+
+
+# The three tables above are keyed by one spelling of each word, and a question uses
+# whichever it likes. "killing" is the key and "kills" is what someone types, so every
+# key is indexed under its stems as well: without this the bridge to the statute's own
+# vocabulary is only crossed by the exact inflection the table happens to name.
+_BY_STEM: dict[str, tuple[str, ...]] = {}
+for _table in (STATUTE_VOCABULARY, _VOCABULARY_REVERSE, ENGLISH_VARIANTS):
+    for _word, _related in _table.items():
+        for _stem in _stems(_word):
+            _BY_STEM[_stem] = _BY_STEM.get(_stem, ()) + _related
 
 
 def expand(term: str) -> set[str]:
@@ -212,13 +351,19 @@ def expand(term: str) -> set[str]:
 
     Query-side only: the index keeps the statute's own words, so `Hit.matched_terms` is
     still keyed by what the person actually asked and `why()` stays readable.
+
+    The bridge is crossed once, from the asked word or a stem of it. Crossing again
+    from a word the bridge reached lands in a neighbouring offence: "khata" reaches
+    "manslaughter", and "manslaughter" reaches "qatl" - so the single word that
+    separates qatl-i-khata (s.322, diyat) from qatl-i-amd (s.302, death as qisas)
+    became a synonym for s.302's. An independent review asked for the punishment for
+    qatl-i-khata and was told s.302 at coverage 1.00, with no refusal.
     """
     forms = _stems(term)
-    for related in STATUTE_VOCABULARY.get(term, ()) + _VOCABULARY_REVERSE.get(term, ()):
-        forms |= _stems(related)
-    # A stem of the asked word may itself be a vocabulary key ("murders" -> "murder").
-    for stem in list(forms):
-        for related in STATUTE_VOCABULARY.get(stem, ()) + _VOCABULARY_REVERSE.get(stem, ()):
+    # Only stems of the word asked are vocabulary keys ("murders" -> "murder"). Terms
+    # the vocabulary produced are not asked again.
+    for stem in _stems(term):
+        for related in _BY_STEM.get(stem, ()):
             forms |= _stems(related)
     return forms
 
@@ -252,6 +397,12 @@ class Hit:
     # Terms that select a different provision and are absent from this one. A hit with
     # any of these is about a neighbouring offence, not this question.
     missing_qualifiers: list[str] = field(default_factory=list)
+    # Question terms that appear nowhere in the corpus as of this date, in any form.
+    # The same for every hit, carried here because it is the reason a caller refuses:
+    # "dacoity" is absent from a corpus of thirteen sections, and the honest answer to
+    # a question about dacoity is that this corpus does not contain it - not the
+    # best-scoring provision among those it does.
+    unknown_terms: list[str] = field(default_factory=list)
 
     @property
     def coverage(self) -> float:
@@ -341,6 +492,9 @@ class BM25Index:
     # answers "what is the State?" and Article 2, which merely mentions the State while
     # being about Islam, does not.
     _heading_tokens: list[set[str]] = field(default_factory=list)
+    # term -> the index words that count as it. Depends only on the term and _by_stem,
+    # so it is rebuilt with the index and never outlives one.
+    _form_cache: dict[str, set[str]] = field(default_factory=dict)
 
     def fit(self, provisions: Sequence[Provision]) -> BM25Index:
         self.documents = list(provisions)
@@ -349,6 +503,7 @@ class BM25Index:
         self._document_frequency = Counter()
         self._by_stem = {}
         self._heading_tokens = []
+        self._form_cache = {}
 
         for provision in self.documents:
             tokens = (
@@ -372,10 +527,20 @@ class BM25Index:
         return self
 
     def _forms(self, term: str) -> set[str]:
-        """Index terms that count as `term`: itself, its inflections, its statute word."""
+        """Index terms that count as `term`: itself, its inflections, its statute word.
+
+        Memoised because the value depends only on the term and the index, while the
+        callers sit inside the per-document loop: one five-word question over 10,000
+        provisions called this 99,174 times and spent four fifths of the query in it.
+        The cache lives on the index, so it is discarded with it.
+        """
+        cached = self._form_cache.get(term)
+        if cached is not None:
+            return cached
         forms = {term}
         for stem in expand(term):
             forms |= self._by_stem.get(stem, set())
+        self._form_cache[term] = forms
         return forms
 
     def _idf(self, term: str) -> float:
@@ -399,6 +564,14 @@ class BM25Index:
         terms = tokenise(query)
         if not terms:
             return []
+
+        # Computed once: it depends on the question and the corpus, not the provision.
+        unknown = sorted(
+            term
+            for term in set(terms)
+            if term not in NOT_A_SUBJECT
+            and not any(self._document_frequency.get(form) for form in self._forms(term))
+        )
 
         hits: list[Hit] = []
         for index, provision in enumerate(self.documents):
@@ -434,8 +607,24 @@ class BM25Index:
                 # Coverage is `Hit.coverage`, computed from matched and missing; it is
                 # the sort's primary key and no longer enters `ranking`.
                 heading = self._heading_tokens[index]
-                hit_in_heading = {t for t in heading if any(t in self._forms(q) for q in terms)}
-                heading_coverage = len(hit_in_heading) / len(heading) if heading else 0.0
+                # Two shares, multiplied: how much of the QUESTION the heading answers,
+                # and how much of the HEADING is the question. Either alone picks the
+                # wrong provision. On its own, the share of the heading - which is what
+                # this used to be - hands a perfect 1.0 to the shortest heading in the
+                # book, so "Punishments" (s.53) beat "Qatl committed under ikrah-i-tam"
+                # (s.303) on a question about qatl committed under duress, by two
+                # thousandths. On its own, the share of the question ties "Definition of
+                # the State" with "Islam to be State religion" on "what is the State?",
+                # because both headings contain the one word asked. A heading that is
+                # about the question and about little else beats both.
+                asked = set(terms)
+                answered = {q for q in asked if self._forms(q) & heading}
+                used = {t for t in heading if any(t in self._forms(q) for q in asked)}
+                heading_coverage = (
+                    (len(answered) / len(asked)) * (len(used) / len(heading))
+                    if asked and heading
+                    else 0.0
+                )
                 hits.append(
                     Hit(
                         provision=provision,
@@ -444,6 +633,7 @@ class BM25Index:
                         missing_terms=missing,
                         heading_coverage=round(heading_coverage, 4),
                         missing_qualifiers=sorted(set(missing) & QUALIFIERS),
+                        unknown_terms=unknown,
                         ranking=round(score * (1 + self.heading_weight * heading_coverage), 6),
                     )
                 )

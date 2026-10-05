@@ -18,6 +18,7 @@ import pytest
 
 from paklaw.corpus import CorpusError
 from paklaw.mcp_server import (
+    CITATION_LIMIT,
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
@@ -25,6 +26,7 @@ from paklaw.mcp_server import (
     SAMPLE_WARNING,
     TOOLS,
     LawServer,
+    ToolError,
     load_corpus,
     serve,
 )
@@ -542,6 +544,12 @@ def _check_against_schema(value, schema, path="structuredContent"):
                 _check_against_schema(item, properties[key], f"{path}.{key}")
             elif isinstance(schema.get("additionalProperties"), dict):
                 _check_against_schema(item, schema["additionalProperties"], f"{path}.{key}")
+            else:
+                # The direction nobody checked. This walked returned -> declared only,
+                # so a tool could return a key its schema never mentions and pass: three
+                # tools returned `warnings` and none of them declared it. A client
+                # generating types from these schemas drops the field.
+                raise AssertionError(f"{path}.{key} is returned and not declared")
     if isinstance(value, list) and isinstance(schema.get("items"), dict):
         for index, item in enumerate(value):
             _check_against_schema(item, schema["items"], f"{path}[{index}]")
@@ -587,6 +595,21 @@ _OUTPUT_CASES = [
     ("parse_citations", {"text": "ss. 302-304 PPC and PLD 2015 Lahore 401"}),
     ("parse_citations", {"text": "nothing"}),
     ("corpus_info", {}),
+    # Paths that produce the keys the drift was hiding in. `warnings` was returned by
+    # three tools and declared by none, and no case here could produce it: the list had
+    # no reversed date range and no subdivision citation, so the check ran only over
+    # payloads that happened to be complete.
+    ("changes_between", {"start": "2026-01-01", "end": "1860-01-01"}),
+    ("provision_history", {"citation": "section 20(1) PECA"}),
+    (
+        "compare_versions",
+        {"citation": "section 20(1) PECA", "before": "2018-01-01", "after": "2026-01-01"},
+    ),
+    ("answer_question", {"question": "punishment for dacoity", "as_of": "2026-01-01"}),
+    (
+        "answer_question",
+        {"question": "punishment under the Indian Penal Code", "as_of": "2026-01-01"},
+    ),
 ]
 
 
@@ -602,3 +625,88 @@ def test_structured_output_matches_the_declared_output_schema(name, arguments):
 def test_every_tool_declares_an_output_schema():
     missing = [t["name"] for t in TOOLS if "outputSchema" not in t]
     assert missing == []
+
+
+# --- numbers a client is given, and can act on ------------------------------------------
+
+
+def test_a_client_can_reproduce_the_order_it_was_given():
+    """`ranking` decided the order and was never sent.
+
+    Its own comment said it was "kept as a field rather than recomputed, so the order a
+    client sees can be checked against a number it was given" - and it was in no
+    `Passage`, no output schema and no test. The only number a client did get, `score`,
+    is not monotonic down the list, so sorting on it reorders the answer.
+    """
+    server = LawServer(*load_corpus(None))
+    answer = server.answer_question({"question": "punishment for murder", "as_of": "2026-01-01"})
+    passages = answer["passages"]
+    for passage in passages:
+        assert passage["coverage"] is not None
+        assert passage["ranking"] is not None
+    given = [p["citation"] for p in passages]
+    rebuilt = [
+        p["citation"] for p in sorted(passages, key=lambda p: (-p["coverage"], -p["ranking"]))
+    ]
+    assert given == rebuilt
+
+
+def test_the_citation_count_is_the_page_and_the_total_is_the_whole():
+    """`count` is declared "Citations on this page" and was set before the cut, so a
+    text with 600 citations reported count 600 alongside 500 of them."""
+    server = LawServer(*load_corpus(None))
+    text = " and ".join(["section 302 PPC"] * 600)
+
+    first = server.parse_citations({"text": text})
+    assert first["count"] == len(first["citations"]) == CITATION_LIMIT
+    assert first["total"] == 600
+    assert first["next_offset"] == CITATION_LIMIT
+
+    last = server.parse_citations({"text": text, "offset": CITATION_LIMIT})
+    assert last["count"] == len(last["citations"]) == 100
+    assert last["total"] == 600
+    assert "next_offset" not in last
+
+
+def test_a_refusal_carries_the_token_its_schema_tells_clients_to_branch_on():
+    """`_REFUSAL` declares `refusal_status` and says "branch on this". `_refusal()`
+    never set it, so every refusal from these two tools declared the key and omitted
+    it."""
+    server = LawServer(*load_corpus(None))
+    for name, arguments in (
+        ("provision_history", {"citation": "section 999 PECA"}),
+        (
+            "compare_versions",
+            {"citation": "section 999 PECA", "before": "2018-01-01", "after": "2026-01-01"},
+        ),
+    ):
+        result = getattr(server, name)(arguments)
+        assert result["refused"] is True, name
+        assert result["refusal_status"] == "unknown_provision", (name, result)
+
+    # A citation that does not parse at all is rejected before the library is reached,
+    # as a tool error rather than a refusal - which is why "no_citation_found" is not in
+    # the enum. The library returns it; this tool cannot.
+    with pytest.raises(ToolError):
+        server.provision_history({"citation": "hello"})
+
+
+def test_every_declared_refusal_status_is_one_the_code_can_produce():
+    """An enum listing statuses nothing emits is as misleading as a missing one."""
+    import paklaw.answer as answer_module
+
+    declared = {
+        value
+        for tool in TOOLS
+        for field, schema in (tool.get("outputSchema") or {}).get("properties", {}).items()
+        if field == "refusal_status"
+        for value in schema["enum"]
+        if value is not None
+    }
+    source = Path(answer_module.__file__).read_text(encoding="utf-8")
+    source += Path(Path(answer_module.__file__).parent / "audit.py").read_text(encoding="utf-8")
+    source += Path(Path(answer_module.__file__).parent / "mcp_server.py").read_text(
+        encoding="utf-8"
+    )
+    missing = sorted(status for status in declared if f'"{status}"' not in source)
+    assert missing == [], missing

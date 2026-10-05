@@ -221,7 +221,10 @@ def compare_versions(
     key = corpus.resolve(key)
     versions = corpus.versions(key)
     if not versions:
-        return {"error": "the cited provision is not in this corpus"}
+        return {
+            "error": "the cited provision is not in this corpus",
+            "refusal_status": "unknown_provision",
+        }
 
     d1, d2 = _date(before), _date(after)
     if d1 > d2:
