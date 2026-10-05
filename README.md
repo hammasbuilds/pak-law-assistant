@@ -437,7 +437,7 @@ CI badge are the record. What the suite covers:
 | the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included |
 | corpus building | the importer against real statute layouts from two public sources |
 | record coverage | what the corpus does and does not claim to know |
-| retrieval quality | 17 questions in a person's words over 26 real provisions, plus **34 paraphrases of the same questions** and **10 real offences the corpus does not hold**. Scored for right, **wrong** and refused: 16 right of 17, 26 right and **0 wrong** of 34 paraphrased, and 10 of 10 refused. The paraphrases exist because a benchmark of 17 sentences is a claim about 17 sentences — an independent review re-asked the same corpus in its own words and got 8 confident wrong answers |
+| retrieval quality | **three question sets over 26 real provisions, written at three different times**: 17 in a person's words (16 right), 34 paraphrases of them written against the provisions (26 right, **0 wrong**), and 20 written later again from the provisions alone (14 right, 1 wrong) — plus **20 subjects the corpus does not hold, all 20 refused**. The later sets exist because a benchmark of 17 sentences is a claim about 17 sentences: an independent review re-asked the same corpus in its own words and got 8 confident wrong answers |
 | regressions | one per defect an independent review reproduced, each pinned so it cannot come back quietly |
 
 Run them with

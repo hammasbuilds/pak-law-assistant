@@ -674,3 +674,95 @@ def test_an_apostrophe_in_a_term_of_art_is_not_a_different_word(assistant, quest
     answer = assistant.answer(question, as_of="2026-01-01")
     assert not answer.refused, answer.refusal_reason
     assert answer.passages[0].citation == "Section 302 PPC"
+
+
+# --- a third set, written from the provisions rather than from the retriever ------------
+#
+# The criticism a benchmark cannot answer about itself is that it was written after the
+# fact. ANSWERABLE was written with the retriever; PARAPHRASES was written against the
+# provisions after an independent review showed ANSWERABLE was too narrow. This set was
+# written a third time, later again, by reading each loaded provision and asking what a
+# person would ask about it - in none of the earlier wording, and several as the bare
+# phrases people actually type.
+#
+# Measured when written: 14 right, 1 wrong, 5 refused of 20, and 10 of 10 refused for
+# subjects the corpus does not hold. The one wrong is "consent of the heirs of the
+# victim", which comes back as s.55A rather than s.54: that phrase appears verbatim in
+# the provisos of s.54 and s.55 and in the body of s.55A, so the bare fragment does not
+# determine which, and the expectation was more specific than the question.
+
+FRESH: list[tuple[str, str]] = [
+    ("if a man is forced to kill, what does the law give him?", "Section 303 PPC"),
+    ("twenty-five years for killing under threat", "Section 303 PPC"),
+    ("death as qisas", "Section 302 PPC"),
+    ("fasad-fil-arz and clause (c)", "Section 302 PPC"),
+    ("when is an act said to be qatl-e-amd?", "Section 300 PPC"),
+    ("bodily injury likely to cause death in the ordinary course of nature", "Section 300 PPC"),
+    ("the victim was not the person he meant to harm", "Section 301 PPC"),
+    ("may the Federal Government reduce a death sentence?", "Section 54 PPC"),
+    ("consent of the heirs of the victim", "Section 54 PPC"),
+    ("fourteen years instead of life", "Section 55 PPC"),
+    ("arsh and daman", "Section 53 PPC"),
+    ("rigorous and simple imprisonment", "Section 53 PPC"),
+    ("twenty-five years equivalent", "Section 57 PPC"),
+    ("does the word animal cover a bird?", "Section 47 PPC"),
+    ("anything made for conveyance on water", "Section 48 PPC"),
+    ("due care and attention", "Section 52 PPC"),
+    ("a solemn affirmation substituted by law", "Section 51 PPC"),
+    ("the Islamic Republic of Pakistan", "Article 1 CONST"),
+    ("exploitation and the gradual fulfilment of the principle", "Article 3 CONST"),
+    ("abrogate or subvert the Constitution by use of force", "Article 6 CONST"),
+]
+
+#: Subjects this corpus does not hold, written at the same time. Six are offences in the
+#: Penal Code that are simply not loaded; four are other bodies of law entirely.
+FRESH_MUST_REFUSE: list[str] = [
+    "what is the punishment for forgery?",
+    "what is the sentence for cheating?",
+    "what is the punishment for extortion?",
+    "what is the punishment for mischief?",
+    "what is the punishment for defamation?",
+    "what is the punishment for sedition?",
+    "how long do I have to file an appeal?",
+    "what are the grounds for divorce under Muslim law?",
+    "what is the stamp duty on a sale deed?",
+    "what is the punishment for qatl committed by a minor?",
+]
+
+MIN_FRESH_RIGHT = 14
+MAX_FRESH_WRONG = 1
+
+#: Named, so fixing this one cannot quietly make room for another.
+FRESH_KNOWN_WRONG = {"consent of the heirs of the victim": "Section 55A PPC"}
+
+
+def test_questions_written_after_the_retriever_was_finished(assistant):
+    """Precision on wording the retriever was never tuned against."""
+    right, wrong, refused = 0, [], []
+    for question, citation in FRESH:
+        answer = assistant.answer(question, as_of="2026-01-01")
+        if answer.refused:
+            refused.append(question)
+        elif answer.passages[0].citation == citation:
+            right += 1
+        else:
+            wrong.append((question, answer.passages[0].citation))
+
+    assert right >= MIN_FRESH_RIGHT, f"right {right}; refused {refused}; wrong {wrong}"
+    assert len(wrong) <= MAX_FRESH_WRONG, wrong
+    for question, got in wrong:
+        assert FRESH_KNOWN_WRONG.get(question) == got, f"a NEW wrong answer: {question} -> {got}"
+
+
+def test_subjects_this_corpus_does_not_hold_are_still_refused(assistant):
+    """The safety property, on subjects chosen after the rule that enforces it existed.
+
+    Six are offences in the Penal Code that are simply not loaded, so the nearest
+    provision is always a neighbour; four are other bodies of law entirely.
+    """
+    answered = {}
+    for question in FRESH_MUST_REFUSE:
+        answer = assistant.answer(question, as_of="2026-01-01")
+        if not answer.refused:
+            answered[question] = answer.passages[0].citation
+    assert answered == {}, answered
