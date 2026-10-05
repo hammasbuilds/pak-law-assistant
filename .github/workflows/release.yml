@@ -1,0 +1,92 @@
+name: release
+
+# A v* tag publishes the package to PyPI and then the server to the MCP registry.
+# Both use OIDC, so no token is stored anywhere: PyPI via a trusted publisher
+# configured for this workflow, the registry via its github-oidc login.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest ruff
+      - run: ruff check src tests demo.py demo_mcp.py
+      - run: pip install -e .
+      - run: pytest -q
+      # a tag that does not start the server is not a release
+      - run: pak-law-assistant --check
+
+  versions:
+    # The tag, pyproject.toml and server.json all name a version. A release where
+    # they disagree puts a different version on PyPI than the registry advertises.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag, pyproject and server.json must agree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          proj=$(python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          srv=$(python -c "import json,pathlib;d=json.loads(pathlib.Path('server.json').read_text());print(d['version'])")
+          pkg=$(python -c "import json,pathlib;d=json.loads(pathlib.Path('server.json').read_text());print(d['packages'][0]['version'])")
+          echo "tag=$tag pyproject=$proj server=$srv package=$pkg"
+          test "$tag" = "$proj" && test "$tag" = "$srv" && test "$tag" = "$pkg"
+
+  pypi:
+    needs: [test, versions]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      # the registry proves PyPI ownership by finding the mcp-name marker in the
+      # uploaded description, so fail here rather than at the registry step
+      - name: The mcp-name marker must survive into the package metadata
+        run: |
+          python - <<'PY'
+          import pathlib, tarfile
+          sdist = next(pathlib.Path("dist").glob("*.tar.gz"))
+          with tarfile.open(sdist) as t:
+              name = next(n for n in t.getnames() if n.endswith("PKG-INFO"))
+              text = t.extractfile(name).read().decode()
+          assert "mcp-name: io.github.hammasbuilds/pak-law-assistant" in text, "marker missing"
+          print("marker present in", name)
+          PY
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  registry:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # github-oidc login, for the io.github.hammasbuilds/* namespace
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/').tar.gz" \
+            | tar xz mcp-publisher
+          ls -l mcp-publisher
+      - name: Wait for the release to be visible on PyPI
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for _ in $(seq 1 30); do
+            if curl -fsS "https://pypi.org/pypi/pak-law-assistant/$version/json" >/dev/null; then
+              echo "pak-law-assistant $version is on PyPI"; exit 0
+            fi
+            sleep 10
+          done
+          echo "still not visible after five minutes"; exit 1
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish

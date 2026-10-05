@@ -158,13 +158,13 @@ flat corpus**.
 
 ## Input
 
-![input](docs/images/input.png)
+![input](https://raw.githubusercontent.com/hammasbuilds/pak-law-assistant/main/docs/images/input.png)
 
 ## Output
 
 `python demo.py`
 
-![output](docs/images/output.png)
+![output](https://raw.githubusercontent.com/hammasbuilds/pak-law-assistant/main/docs/images/output.png)
 
 *Questions 1 and 2 are the same sentence. The only difference is the date they are about,
 and it changes the answer from five years and ten million rupees to three years and one
