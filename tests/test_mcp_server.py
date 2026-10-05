@@ -20,6 +20,7 @@ from paklaw.corpus import CorpusError
 from paklaw.mcp_server import (
     CITATION_LIMIT,
     INVALID_PARAMS,
+    INVALID_REQUEST,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
     PROTOCOL_VERSIONS,
@@ -758,3 +759,65 @@ def test_compare_versions_does_not_say_both_when_it_means_either():
     # `changes` on every path, so a client reads one shape rather than branching.
     for result in (one_side, neither):
         assert result["changes"] == []
+
+
+def test_an_old_protocol_is_not_offered_a_field_it_does_not_have():
+    """`outputSchema` arrived in 2025-06-18, alongside `structuredContent`.
+
+    The payload was correctly withheld from older clients and the schema was advertised
+    to them anyway — a contract offered and then declined.
+    """
+    for version in PROTOCOL_VERSIONS:
+        server = LawServer(*load_corpus(None))
+        server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {"protocolVersion": version},
+            }
+        )
+        listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        advertised = any("outputSchema" in t for t in listed["result"]["tools"])
+        called = server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "corpus_info", "arguments": {}},
+            }
+        )
+        sent = "structuredContent" in called["result"]
+        assert advertised == sent, (version, advertised, sent)
+        assert sent is (version in {"2025-11-25", "2025-06-18"}), version
+
+
+def test_an_id_that_can_be_answered_is_answered():
+    """A wrong envelope is still attributable when it carried a usable id.
+
+    `{"jsonrpc": "1.0", "id": 7}` was answered with id null, so a client could not match
+    the error to the call. A null id is for a message too malformed to attribute.
+    """
+    server = LawServer(*load_corpus(None))
+    answered = server.handle({"jsonrpc": "1.0", "id": 7, "method": "ping"})
+    assert answered["id"] == 7
+    assert answered["error"]["code"] == INVALID_REQUEST
+
+    for unusable in ({"jsonrpc": "1.0", "method": "ping"}, {"jsonrpc": "1.0", "id": None}):
+        assert server.handle(unusable)["id"] is None
+
+
+def test_a_call_with_no_tool_named_says_so():
+    """ "unknown tool: None" named the wrong problem: nothing was asked for, rather than
+    something unrecognised being asked for. Both messages now list the tools."""
+    server = LawServer(*load_corpus(None))
+    missing = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call"})
+    assert missing["error"]["code"] == INVALID_PARAMS
+    assert "needs params.name" in missing["error"]["message"]
+    assert "answer_question" in missing["error"]["message"]
+
+    unknown = server.handle(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "nope"}}
+    )
+    assert "unknown tool: 'nope'" in unknown["error"]["message"]
+    assert "answer_question" in unknown["error"]["message"]

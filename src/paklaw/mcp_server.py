@@ -45,6 +45,7 @@ import math
 import os
 import re
 import sys
+import traceback
 from collections import Counter
 from importlib import resources
 from typing import Any, BinaryIO
@@ -1076,8 +1077,15 @@ class LawServer:
     def _call_tool(self, params: dict) -> dict:
         name = params.get("name")
         known = {t["name"] for t in TOOLS}
+        if name is None:
+            raise ProtocolError(
+                INVALID_PARAMS,
+                "tools/call needs params.name; one of " + ", ".join(sorted(known)),
+            )
         if name not in known:
-            raise ProtocolError(INVALID_PARAMS, f"unknown tool: {name!r}")
+            raise ProtocolError(
+                INVALID_PARAMS, f"unknown tool: {name!r}; one of " + ", ".join(sorted(known))
+            )
         handler = getattr(self, name)
 
         arguments = params.get("arguments") or {}
@@ -1114,7 +1122,13 @@ class LawServer:
     def handle(self, message: Any) -> dict | None:
         """One JSON-RPC message in, at most one response out."""
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
-            return _error(None, INVALID_REQUEST, "not a JSON-RPC 2.0 message")
+            # The id is answered when the message carried a usable one, even though the
+            # envelope is wrong: a client that sent {"jsonrpc": "1.0", "id": 7} can match
+            # the error to the call it made. A null id here is the spec's own answer for
+            # a message too malformed to attribute.
+            sent = message.get("id") if isinstance(message, dict) else None
+            usable = sent if isinstance(sent, (str, int)) and not isinstance(sent, bool) else None
+            return _error(usable, INVALID_REQUEST, "not a JSON-RPC 2.0 message")
 
         method = message.get("method")
         if "id" not in message:
@@ -1144,7 +1158,17 @@ class LawServer:
             elif method == "ping":
                 result = {}
             elif method == "tools/list":
-                result = {"tools": TOOLS}
+                # `outputSchema` arrived in 2025-06-18 alongside `structuredContent`.
+                # Advertising it to an older client while correctly withholding the
+                # payload is advertising a contract this server then declines to honour.
+                if self.protocol_version in _STRUCTURED:
+                    result = {"tools": TOOLS}
+                else:
+                    result = {
+                        "tools": [
+                            {k: v for k, v in tool.items() if k != "outputSchema"} for tool in TOOLS
+                        ]
+                    }
             elif method == "tools/call":
                 result = self._call_tool(params)
             else:
@@ -1152,6 +1176,10 @@ class LawServer:
         except ProtocolError as exc:
             return _error(request_id, exc.code, exc.message)
         except Exception as exc:  # a bug must not take the server down with it
+            # ...but it must leave a trace. stdout is the protocol and stderr is free,
+            # so the traceback goes there rather than nowhere: a one-line message with
+            # no frames is not enough to find the bug it is reporting.
+            traceback.print_exc(file=sys.stderr)
             return _error(request_id, INTERNAL_ERROR, f"{type(exc).__name__}: {exc}")
 
         return {"jsonrpc": "2.0", "id": request_id, "result": result}

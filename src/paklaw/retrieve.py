@@ -710,6 +710,11 @@ class LawSearch:
         Every date in one interval sees exactly the same provisions, so they share an
         index: 2020-06-01 and 2021-03-15 are one index, not two.
         """
+        # Keyed on the provision count, which `add` always changes. Replacing a
+        # provision in `corpus.provisions` in place leaves the count alone and would
+        # serve the old text under the right citation - so a corpus is built by `add`
+        # and then read, and the list is not edited underneath a live LawSearch. The
+        # server never does: its corpus is fixed for the life of the process.
         size = len(self.corpus)
         if self._boundaries_for != size:
             dates = {p.in_force_from for p in self.corpus}
