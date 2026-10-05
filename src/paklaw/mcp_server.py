@@ -82,6 +82,11 @@ CITATION_LIMIT = 500
 # A draft, a judgment, a chapter of an Act: comfortably under this. Past it the answer
 # would be several megabytes, which no client displays and no model reads.
 TEXT_LIMIT = 200_000
+# How much of the question comes back in the result. A client sends the question, so
+# echoing all of it doubles it on the wire for no information: a 100,000-character
+# question produced a 98 KB reply to say "refused". Enough to correlate a result with a
+# request, and the result says when it has been shortened.
+ECHO_LIMIT = 2_000
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -259,7 +264,13 @@ TOOLS: list[dict[str, Any]] = [
         },
         ["question", "as_of"],
         output={
-            "question": {"type": "string"},
+            "question": {
+                "type": "string",
+                "description": "The question as asked, shortened past 2,000 characters - "
+                "the caller already has the whole of it, and echoing it doubles a long "
+                "one on the wire. `question_length` is always the full length.",
+            },
+            "question_length": {"type": "integer"},
             "as_of": {"type": "string"},
             **_REFUSAL,
             "passages": {"type": "array", "items": _PASSAGE},
@@ -660,6 +671,13 @@ def load_corpus(path: str | None) -> tuple[Corpus, str]:
 # ---- argument handling ---------------------------------------------------------------
 
 
+def _echo(question: str) -> str:
+    """The question, shortened if it is long. The caller already has the whole of it."""
+    if len(question) <= ECHO_LIMIT:
+        return question
+    return f"{question[:ECHO_LIMIT]}... [{len(question):,} characters; echo shortened]"
+
+
 def _string(arguments: dict, name: str, *, required: bool = False) -> str | None:
     value = arguments.get(name)
     if value is not None and not isinstance(value, str):
@@ -786,7 +804,8 @@ class LawServer:
 
         answer: Answer = self.assistant.answer(question, as_of=as_of, statute=statute)
         result = {
-            "question": answer.question,
+            "question": _echo(answer.question),
+            "question_length": len(answer.question),
             "as_of": answer.as_of,
             "refused": answer.refused,
             "refusal_reason": answer.refusal_reason or None,

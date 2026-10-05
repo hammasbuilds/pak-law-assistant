@@ -334,17 +334,45 @@ class _Layout:
     unlisted: list[str]
 
 
-def provision_spans(text: str) -> list[tuple[str, int, int]]:
+def provision_spans(text: str, *, include_repealed: bool = False) -> list[tuple[str, int, int]]:
     """(number, start, end) of each provision found in `text`, header included.
 
-    For build scripts that need to know which provision an offset falls in, such as
-    the provision an amendment marker belongs to.
+    For build scripts that need to know which provision an offset falls in, such as the
+    provision an amendment marker belongs to.
+
+    By default this agrees with `split_act`: a heading the source lists as `[Repealed]`
+    carries no provision, so it is not reported. It used to be reported, and nothing
+    noticed - the function was exported, had no caller and no test, and had quietly
+    drifted one provision apart from the importer it has to agree with. On the real
+    Penal Code fixture it returned 14 spans where `split_act` imported 13, the extra one
+    being s.56 "[Repealed]". A caller attributing amendment markers by offset would have
+    attributed some to a provision the importer never created.
+
+    `include_repealed=True` asks for every heading in the layout, which is the right
+    answer for "what does this offset sit under" and the wrong one for "which provision
+    is this". The caller has to say which it means.
     """
     chain = _layout(text).chain
-    return [
+    spans = [
         (c.number, c.start, chain[i + 1].start if i + 1 < len(chain) else len(text))
         for i, c in enumerate(chain)
     ]
+    if include_repealed:
+        return spans
+    kept = []
+    for number, start, end in spans:
+        segment = text[start:end]
+        # The same test the importer applies, applied to the same text.
+        # The importer tests these AFTER stripping the leading number, so the same
+        # text has to be presented the same way or the two disagree. s.56 of the Penal
+        # Code reads "56. [Sentence of Europeans and Americans to penal servitude.]
+        # Rep. by the Criminal Law ... Act, 1949", and `Rep. by` is only at the start
+        # once "56." is gone.
+        rest = re.sub(r"^\s*\d+[A-Z]*\.\s*", "", segment.replace("\n", " ")).strip()
+        if _REMOVED_BY.match(rest) or _DROPPED.match(rest):
+            continue
+        kept.append((number, start, end))
+    return kept
 
 
 def _layout(text: str) -> _Layout:

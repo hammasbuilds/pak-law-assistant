@@ -25,7 +25,7 @@ import pytest
 
 from paklaw.ingest import main
 from paklaw.sources import pakistan_code, pakistani_org, strip_stars
-from paklaw.split import split_act
+from paklaw.split import provision_spans, split_act
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -214,3 +214,54 @@ def test_the_command_line_reads_a_pakistan_code_pdf_text(tmp_path, capsys):
     assert json.loads(captured.out)["provisions"] == 13
     assert "imported 13 provision(s)" in captured.err
     assert "1 omitted or repealed" in captured.err
+
+
+# --- an exported helper with no caller had already drifted ----------------------------
+
+
+@pytest.mark.parametrize(
+    "fixture,statute,unit",
+    [
+        ("ppc_pakistan_code_pp39-41.txt", "PPC", "section"),
+        ("constitution_pakistan_code_pp18-20.txt", "CONST", "article"),
+    ],
+)
+def test_provision_spans_agrees_with_the_importer(fixture, statute, unit):
+    """`provision_spans` is exported, had no caller and no test, and had drifted.
+
+    On the real Penal Code pages it returned 14 spans where `split_act` imported 13 -
+    the extra one being s.56, which reads "[Sentence of Europeans and Americans to
+    penal servitude.] Rep. by the Criminal Law ... Act, 1949". A build script
+    attributing amendment markers by offset would have attributed some to a provision
+    the importer never created.
+
+    This is the second time an unused export turned out to disagree with the code it
+    has to agree with; `resolve_bare` was the first. The test is the point: a helper
+    nothing calls is a helper nothing checks.
+    """
+    text = strip_stars(pakistan_code(read(fixture)).text)
+    rows, _ = split_act(text, statute=statute, in_force_from="1900-01-01", unit=unit)
+    spans = provision_spans(text)
+    assert [number for number, _, _ in spans] == [r["number"] for r in rows]
+
+
+def test_include_repealed_asks_for_the_layout_instead():
+    """ "What does this offset sit under" and "which provision is this" are different
+    questions, and the caller has to say which it means."""
+    text = strip_stars(pakistan_code(read("ppc_pakistan_code_pp39-41.txt")).text)
+    default = [n for n, _, _ in provision_spans(text)]
+    every = [n for n, _, _ in provision_spans(text, include_repealed=True)]
+    assert "56" not in default
+    assert "56" in every
+    assert set(every) - set(default) == {"56"}
+
+
+def test_spans_cover_the_text_without_overlapping():
+    """An offset must fall in exactly one provision, or attributing by offset is
+    ambiguous in a way no caller could detect."""
+    text = strip_stars(pakistan_code(read("ppc_pakistan_code_pp39-41.txt")).text)
+    spans = provision_spans(text, include_repealed=True)
+    # strict=False on purpose: spans[1:] is one shorter, which is the pairing wanted.
+    for (_, _, end), (_, next_start, _) in zip(spans, spans[1:], strict=False):
+        assert end == next_start
+    assert spans[-1][2] == len(text)
