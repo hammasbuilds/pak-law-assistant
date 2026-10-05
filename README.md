@@ -467,11 +467,16 @@ Run them with
   read the import report before loading the result.
 - A bare `Article 25` is read as the Constitution's, which is what it means in nearly all
   Pakistani writing. An article of any other instrument has to be named (`Article 17 QSO`).
-- Relevance is lexical. `meaning` does not reach `denotes`, so "the meaning of animal in
-  this Code" is refused although s.47 ("The word 'animal' denotes…") answers it. Eight of
-  the 34 paraphrases in the benchmark are refused for reasons of that shape, and none is
-  answered wrongly. That errs toward refusing, which is the side this repo chooses to err
-  on.
+- Relevance is lexical, and the refusals cost recall. `meaning` does not reach `denotes`,
+  so "the meaning of animal in this Code" is refused although s.47 ("The word 'animal'
+  denotes…") answers it; and a word the corpus has never seen refuses the whole question,
+  so "does the word animal cover a bird?" is refused because the corpus contains no
+  *bird*, not because it contains no *animal*. Across the three question sets that is 13
+  refusals of 71 answerable questions against 1 wrong answer — roughly one in five
+  questions refused that a reader would have answered, to make a wrong citation rare. An
+  independent review removed the rule and measured the other side: three confident wrong
+  citations appeared, two of them s.302, "punished with death as qisas", for offences the
+  corpus does not hold. That is the trade, and this repository chooses this side of it.
 - Sections are the unit. A subsection citation returns its whole section, and an amended
   subsection has to be recorded as a new text of the whole section.
 - Urdu support is tokenisation-level. Full bilingual retrieval needs the Urdu
