@@ -141,6 +141,15 @@ class TestHandshake:
             assert set(dates) <= set(schema["required"]), name
             assert schema["additionalProperties"] is False
             assert t["annotations"]["readOnlyHint"] is True
+            # The surface a Trust Index grades, and a client reads: a tool with an
+            # undescribed argument is one a model has to guess at.
+            assert t.get("description"), name
+            # `properties` present, not non-empty: corpus_info takes no arguments, and
+            # a tool with nothing to pass is a readable surface too.
+            assert isinstance(schema.get("properties"), dict), name
+            assert t.get("outputSchema", {}).get("properties"), name
+            for argument, spec in schema["properties"].items():
+                assert spec.get("description"), f"{name}.{argument} has no description"
 
     def test_every_tool_is_callable_through_the_protocol(self):
         """The dispatch table and the advertised list cannot drift apart."""
