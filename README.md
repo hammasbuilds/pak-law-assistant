@@ -453,7 +453,7 @@ Run them with
 | Regressions | every citation form above, off-topic questions refused, unanswered citations named, filter before cut, `amended_since`, row types checked at load, re-enactment, schedules, null id, misspelt argument, internal error as a tool error, input limit, 10,000-version and 10,000-citation timings |
 | Audit | every citation status, `all_in_force` only when everything was checked, amended-after-the-date flagged, repealed-then-reinstated, word-level diff, statute ordering |
 | Second review | the Constitution imported as articles and a sectioned one refused, Urdu and Roman Urdu citations, Urdu digits, common Act names, whitespace input, reversed dates reported, protocol 2025-11-25, `server.json` agrees with the package |
-| MCP server | every tool called through the protocol, every date required in every schema, version negotiation, notifications get no reply, `as_of` required in the schema, refusal is a result and a bad date is a tool error, no infinite score on the wire, a malformed line does not end the session, batches, **stdout carries only protocol**, a bad corpus exits before serving |
+| MCP server | every tool called through the protocol, every date required in every schema, version negotiation, notifications get no reply, `as_of` required in the schema, refusal is a result and a bad date is a tool error, no infinite score on the wire, a malformed line does not end the session, batches (accepted although MCP dropped them in 2025-06-18; leniency, not a feature to rely on), **stdout carries only protocol**, a bad corpus exits before serving |
 
 ## Limits
 

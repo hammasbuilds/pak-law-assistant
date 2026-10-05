@@ -410,6 +410,12 @@ class Citation:
         label = {"section": "Section", "article": "Article", "rule": "Rule"}.get(
             self.unit, self.unit.title()
         )
+        if not self.statute and self.named_statute:
+            # An Act was named and did not resolve - "section 302 of the Indian Penal
+            # Code". Dropping it rendered as a bare "Section 302", which in a list beside
+            # a real "Section 302 PPC" reads like the same provision with a different
+            # verdict. The whole point of that verdict is which Act it is.
+            return f"{label} {self.provision} ({self.named_statute})"
         return f"{label} {self.provision} {self.statute}".strip()
 
 

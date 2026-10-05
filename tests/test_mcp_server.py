@@ -821,3 +821,24 @@ def test_a_call_with_no_tool_named_says_so():
     )
     assert "unknown tool: 'nope'" in unknown["error"]["message"]
     assert "answer_question" in unknown["error"]["message"]
+
+
+def test_an_unrecognised_act_stays_in_the_citation_it_was_written_in():
+    """ "section 302 of the Indian Penal Code" rendered as a bare "Section 302".
+
+    Beside a real "Section 302 PPC" in the same list, that reads like one provision with
+    two verdicts — and which Act it is, is the entire content of the verdict.
+    """
+    server = LawServer(*load_corpus(None))
+    result = server.check_citations(
+        {
+            "text": "section 302 of the Indian Penal Code and section 302 PPC and section 9",
+            "as_of": "2026-01-01",
+        }
+    )
+    rendered = {c["citation"]: c["status"] for c in result["citations"]}
+    assert rendered == {
+        "Section 302 (Indian Penal Code)": "act_not_recognised",
+        "Section 302 PPC": "in_force",
+        "Section 9": "no_act_named",
+    }
