@@ -18,7 +18,7 @@ import datetime as dt
 import difflib
 import re
 
-from .citation import Citation, locate, statute_aliases
+from .citation import Citation, locate, resolve_bare, statute_aliases
 from .corpus import Corpus, Provision
 
 # Statuses, in the order a reader should worry about them.
@@ -67,16 +67,12 @@ def check_citations(
     results: list[dict] = []
 
     for offset, citation in locate(text, statutes=statute_aliases(loaded)):
-        if (
-            default_statute
-            and citation.kind == "statutory"
-            and not citation.statute
-            # Never over an Act the text named. "Section 302 of the Indian Penal Code"
-            # with a PPC default would otherwise be certified as good Pakistani law,
-            # and the note would say PPC while the draft said Indian.
-            and not citation.named_statute
-        ):
-            citation = Citation(**{**citation.__dict__, "statute": default_statute})
+        if default_statute:
+            # One implementation of "apply a default statute", in citation.py, which
+            # also refuses to apply one over an Act the text named. Reimplementing the
+            # rule here is how the two drifted: the audit learned to refuse a foreign
+            # Act and the exported helper did not.
+            (citation,) = resolve_bare([citation], default_statute=default_statute)
         # Where it is, so a reader or an editor can go straight to it.
         results.append(_check_one(corpus, citation, date, loaded) | {"offset": offset})
 

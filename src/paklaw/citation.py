@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import functools
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # Common statute abbreviations, normalised to a canonical key.
 STATUTES: dict[str, str] = {
@@ -498,10 +498,15 @@ def resolve_bare(citations: list[Citation], *, default_statute: str) -> list[Cit
     context is normal legal reading — but the default must be supplied explicitly by
     whatever knows the context, never guessed, because attributing a provision to the
     wrong Act is a serious error that looks like a correct answer.
+
+    A citation that named an Act this module could not resolve is left alone. "Section
+    302 of the Indian Penal Code" has no `statute`, and filling it from a PPC default
+    turns a foreign provision into a Pakistani one with the same number — which is that
+    serious error, arrived at by a route that looks like helpfulness.
     """
     return [
         c
-        if (c.statute or c.kind != "statutory")
-        else Citation(**{**c.__dict__, "statute": default_statute})
+        if (c.statute or c.named_statute or c.kind != "statutory")
+        else replace(c, statute=default_statute)
         for c in citations
     ]

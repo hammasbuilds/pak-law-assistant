@@ -9,6 +9,7 @@
   <a href="#citation-parsing">Citation parsing</a> &middot;
   <a href="#why-bm25-and-not-embeddings">Why BM25</a> &middot;
   <a href="#amendment-history-is-often-the-question-itself">Amendment history</a> &middot;
+  <a href="#install">Install</a> &middot;
   <a href="#as-an-mcp-server">MCP server</a> &middot;
   <a href="#problems-hit-while-building-this">Problems hit</a>
 </p>
@@ -23,6 +24,32 @@
 </p>
 
 ---
+
+## Install
+
+No dependencies, so nothing to resolve:
+
+```bash
+pip install -e .          # or: uvx pak-law-assistant  (once released)
+paklaw-mcp --check        # the MCP server answers, on a 3-provision sample
+```
+
+Add it to an MCP client — Claude Code, or anything that speaks the protocol:
+
+```json
+{
+  "mcpServers": {
+    "pak-law": {
+      "command": "paklaw-mcp",
+      "env": { "PAKLAW_CORPUS": "/path/to/statutes.jsonl" }
+    }
+  }
+}
+```
+
+Without `PAKLAW_CORPUS` it runs on a three-provision demonstration sample and says so in
+every result. Build a real corpus with `paklaw-corpus import`; the full walk-through is in
+[Run it yourself](#run-it-yourself).
 
 ## The failure this exists to prevent
 
@@ -387,10 +414,12 @@ than one live version of a provision.
 
 ## Tests
 
-**226 tests: 57 for the library, 47 for the MCP server, 41 for corpus building and
-source parsing, 17 for record coverage, 44 regressions, one per defect an independent
-review reproduced, and 20 from a second review that drove the installed server as an MCP
-user. No dependencies, no corpus download.** Run them with
+**280 tests: 53 for the library, 68 for the MCP server (including a schema check that
+every tool's `structuredContent` matches its declared `outputSchema`, on every path
+including the refusals), 24 for corpus building, 17 for source parsing, 17 for record
+coverage, 77 regressions — one per defect an independent review reproduced — 20 from a
+review that drove the installed server as an MCP user, and 4 for the citation audit. No
+dependencies, no corpus download.** Run them with
 `pip install -e .[dev]` then `pytest`, or `uv run pytest`. CI runs them on Python 3.10 to 3.13, then runs both demos.
 
 | Covered | |
@@ -455,7 +484,7 @@ git clone https://github.com/hammasbuilds/pak-law-assistant
 cd pak-law-assistant
 
 pip install -e ".[dev]"  # the package has no dependencies; dev adds pytest and ruff
-pytest -q                # 226 tests, no corpus download
+pytest -q                # 280 tests, no corpus download
 python demo.py           # the library
 python demo_mcp.py       # the same questions through the MCP server
 ```
