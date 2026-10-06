@@ -437,8 +437,40 @@ CI badge are the record. What the suite covers:
 | the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included |
 | corpus building | the importer against real statute layouts from two public sources |
 | record coverage | what the corpus does and does not claim to know |
-| retrieval quality | **three question sets over 26 real provisions, written at three different times**: 17 in a person's words (16 right), 34 paraphrases of them written against the provisions (26 right, **0 wrong**), and 20 written later again from the provisions alone (14 right, 1 wrong) — plus **20 subjects the corpus does not hold, all 20 refused**. The later sets exist because a benchmark of 17 sentences is a claim about 17 sentences: an independent review re-asked the same corpus in its own words and got 8 confident wrong answers |
+| retrieval quality | **three question sets over 26 real provisions, written at three different times**, and 26 subjects the corpus does not hold. `python tests/bench.py` prints the table (below), so the figures here have a producer rather than being asserted as floors in a test and written out by hand. The later sets exist because a benchmark of 17 sentences is a claim about 17 sentences: an independent review re-asked the same corpus in its own words and got 8 confident wrong answers |
 | regressions | one per defect an independent review reproduced, each pinned so it cannot come back quietly |
+
+### Retrieval quality
+
+```
+$ python tests/bench.py
+
+RETRIEVAL QUALITY
+======================================================================
+  question set                          n   right  wrong  refused
+  ----------------------------------------------------------------
+  in a person's words                  17      16      0        1
+  paraphrases                          34      26      0        8
+  written later again                  20      14      1        5
+  ----------------------------------------------------------------
+  not in corpus (set 1)                 6       0      0        6
+  not in corpus (set 2)                10       0      0       10
+  not in corpus (set 3)                10       0      0       10
+  ----------------------------------------------------------------
+  97 questions asked: 56 answered correctly, 1 wrong, 26 of 26 correctly refused
+```
+
+`wrong` is the only column that matters. A refusal costs a reader a lookup; a confident
+citation of the wrong provision costs them the argument. The one wrong answer is
+`"consent of the heirs of the victim"` returning s.55A rather than s.54 - that phrase is
+verbatim in the provisos of s.54 and s.55 and in the body of s.55A, so the bare fragment
+does not determine which, and the expectation was more specific than the question.
+
+The refusal population was written here as **20** until this command printed it: it is 26
+across the three sets, and the figure had been copied from one set's size rather than
+counted. The thresholds in `test_retrieval_quality.py` are floors - `right >= 26` - so a
+set whose results had moved would still pass, which is why the table is printed and
+checked against this file rather than maintained by hand.
 
 Run them with
 `uv sync --all-groups` then `uv run pytest`, or `pip install -e . && pip install pytest ruff jsonschema`. CI runs them on Python 3.10 to 3.13, then runs both demos.

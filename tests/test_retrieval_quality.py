@@ -827,22 +827,36 @@ def test_the_three_question_sets_are_the_sizes_the_readme_describes():
     assert (len(MUST_REFUSE), len(FRESH_MUST_REFUSE)) == (10, 10)
     assert len(ANSWERABLE) + len(PARAPHRASES) + len(FRESH) == 71
 
+    # Read from the generated table, not from the prose. The prose carried the sizes
+    # and the results together, and this test compared the refusal count against
+    # MUST_REFUSE + FRESH_MUST_REFUSE only - leaving UNANSWERABLE's six out of its own
+    # denominator. So "20 subjects the corpus does not hold" was green against a real
+    # population of 26, with the test agreeing because it counted two sets of three.
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
-    described = re.search(
-        r"(\d+) in a person's words \(\d+ right\), (\d+) paraphrases of them.*?"
-        r"and (\d+) written later again",
-        readme.replace("\n", " "),
+    rows = {
+        name.strip(): int(n)
+        # Anchored on the four numbers at the end of the row, not on the name being
+        # digit-free: the refusal rows are called "not in corpus (set 1)", so a
+        # `[^\d]+?` name stopped at the 1 and matched nothing. `\D` was worse still -
+        # it matches a newline, so the first row swallowed the header above it.
+        for name, n in re.findall(r"^  (\S[^\n]*?)\s{2,}(\d+)\s+\d+\s+\d+\s+\d+$", readme, re.M)
+    }
+    described = (
+        rows.get("in a person's words"),
+        rows.get("paraphrases"),
+        rows.get("written later again"),
     )
-    assert described, "the README no longer describes the three sets"
-    assert tuple(int(g) for g in described.groups()) == (
-        len(ANSWERABLE),
-        len(PARAPHRASES),
-        len(FRESH),
-    )
+    assert all(n is not None for n in described), f"the README table lost a row: {rows}"
+    assert described == (len(ANSWERABLE), len(PARAPHRASES), len(FRESH))
 
-    unheld = re.search(r"\*\*(\d+) subjects the corpus does not hold, all \d+ refused\*\*", readme)
+    refusal_rows = {k: v for k, v in rows.items() if k.startswith("not in corpus")}
+    assert len(refusal_rows) == 3, f"the README shows {len(refusal_rows)} refusal sets, not 3"
+    assert sum(refusal_rows.values()) == (
+        len(UNANSWERABLE) + len(MUST_REFUSE) + len(FRESH_MUST_REFUSE)
+    )
+    unheld = re.search(r"(\d+) subjects the corpus does not hold", readme)
     assert unheld, "the README no longer states the unanswerable count"
-    assert int(unheld.group(1)) == len(MUST_REFUSE) + len(FRESH_MUST_REFUSE)
+    assert int(unheld.group(1)) == sum(refusal_rows.values()) == 26
 
 
 def test_no_question_appears_in_two_sets():
@@ -856,3 +870,81 @@ def test_no_question_appears_in_two_sets():
     refusable = MUST_REFUSE + FRESH_MUST_REFUSE
     assert len(set(refusable)) == len(refusable)
     assert set(asked).isdisjoint(refusable), "a question cannot be both answerable and not"
+
+
+# -- the README's table against the command that prints it --------------------
+
+
+def _bench():
+    """`tests/bench.py` loaded by path.
+
+    Not `import bench`: pytest's rootdir here is the repository, so `tests/` is not
+    on `sys.path` and a plain import works from a shell and not from the suite.
+    """
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / "bench.py"
+    spec = importlib.util.spec_from_file_location("paklaw_bench", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_readme_table_is_the_one_the_bench_prints():
+    """The figures in the README, recomputed.
+
+    Every threshold in this module is a floor - `right >= MIN_PARAPHRASE_RIGHT` - which
+    is the right shape for a regression gate and the wrong shape for a published number:
+    a set that had moved to 30 right and 4 wrong-but-under-budget would pass every test
+    here while the README still said 26 and 0. And the refusal population was written
+    out by hand as 20 when it is 26 across the three sets, a figure copied from one
+    set's size.
+
+    So the table is generated and this compares the two line by line. The README block
+    is the exact stdout of `python tests/bench.py`, so a figure that moves fails here
+    with the new table in the message rather than being noticed by a reader.
+    """
+    import io
+    import re
+    from contextlib import redirect_stdout
+
+    bench = _bench()
+
+    printed = io.StringIO()
+    with redirect_stdout(printed):
+        bench.main()
+    table = [
+        line.rstrip()
+        for line in printed.getvalue().splitlines()
+        if line.strip() and not line.startswith("  WRONG") and "expected" not in line
+    ]
+    # Everything up to and including the summary line; the prose after it is commentary.
+    end = next(i for i, ln in enumerate(table) if ln.strip().startswith("97 questions"))
+    table = table[: end + 1]
+
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
+    block = re.search(r"\$ python tests/bench\.py\n(.*?)\n```", readme, re.S)
+    assert block, "the README no longer shows the bench output"
+    quoted = [ln.rstrip() for ln in block.group(1).splitlines() if ln.strip()]
+
+    assert quoted == table, (
+        "the README's table is not what the command prints.\n\nIt prints:\n"
+        + "\n".join(table)
+        + "\n\nThe README says:\n"
+        + "\n".join(quoted)
+    )
+
+
+def test_every_question_in_every_set_is_in_the_printed_table():
+    """A table over a subset of the sets would read as a table over all of them."""
+    bench = _bench()
+
+    assert (
+        len(ANSWERABLE)
+        + len(PARAPHRASES)
+        + len(FRESH)
+        + len(UNANSWERABLE)
+        + len(MUST_REFUSE)
+        + len(FRESH_MUST_REFUSE)
+    ) == 97, "the sets no longer total the 97 the README states"
+    assert bench.main() == 0
