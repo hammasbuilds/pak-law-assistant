@@ -434,7 +434,7 @@ CI badge are the record. What the suite covers:
 | Area | What it holds |
 |---|---|
 | the library | retrieval, answering, the nine refusal conditions |
-| the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included |
+| the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included. Also the handshake: `structuredContent` and `outputSchema` arrived in protocol 2025-06-18, so a call before `initialize` used to be answered in the degraded 2024 shape rather than refused - a client that skipped the handshake got a worse answer and no way to tell why. It is now a -32002, and the test that found it compares the two shapes |
 | corpus building | the importer against real statute layouts from two public sources |
 | record coverage | what the corpus does and does not claim to know |
 | retrieval quality | **three question sets over 26 real provisions, written at three different times**, and 26 subjects the corpus does not hold. `python tests/bench.py` prints the table (below), so the figures here have a producer rather than being asserted as floors in a test and written out by hand. The later sets exist because a benchmark of 17 sentences is a claim about 17 sentences: an independent review re-asked the same corpus in its own words and got 8 confident wrong answers |

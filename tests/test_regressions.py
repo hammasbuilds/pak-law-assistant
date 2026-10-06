@@ -193,11 +193,35 @@ def test_hyphenated_headings_and_a_schedule():
 # ---- protocol -----------------------------------------------------------------------------
 
 
-def run(*messages) -> list[dict]:
+#: The handshake, prepended by `run`. Every reply shape in this server is negotiated -
+#: `structuredContent` and `outputSchema` arrived in 2025-06-18 - so a test that skips
+#: `initialize` is testing the degraded 2024 shape and not the one a client gets. Four
+#: tests in this file were doing exactly that, which is how the cold path came to
+#: return a different answer unnoticed.
+HANDSHAKE = {
+    "jsonrpc": "2.0",
+    "id": 0,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "regressions"},
+    },
+}
+
+
+def run(*messages, handshake: bool = True) -> list[dict]:
+    """Replies to `messages`, with the handshake done first and its reply stripped.
+
+    `handshake=False` sends them cold, which only the tests about the handshake itself
+    want.
+    """
     stdout = io.BytesIO()
-    lines = b"".join(json.dumps(m).encode() + b"\n" for m in messages)
+    sent = ((HANDSHAKE,) if handshake else ()) + messages
+    lines = b"".join(json.dumps(m).encode() + b"\n" for m in sent)
     serve(sample(), io.BytesIO(lines), stdout)
-    return [json.loads(line) for line in stdout.getvalue().splitlines()]
+    replies = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    return replies[1:] if handshake else replies
 
 
 def call(name, arguments):
@@ -653,3 +677,96 @@ def test_a_parenthesised_rules_title_parses():
     # The unparenthesised and comma forms must still work.
     assert len(parse("Rule 5 of the Companies General Provisions Rules 2018")) == 1
     assert len(parse("rule 3 of the Income Tax Rules, 2002")) == 1
+
+
+# -- --check crashed on a console that could not hold an em dash --------------------
+
+
+def test_check_prints_utf8_whatever_the_console_encoding_is():
+    """`main` reconfigured stderr to UTF-8 and left stdout alone.
+
+    The comment above that line says why it was needed: "Windows defaults stderr to
+    the ANSI code page, and an em dash in a diagnostic reaches the client's log as a
+    stray byte." stdout is where the only non-ASCII output actually goes - `--check`
+    prints the corpus description with `ensure_ascii=False`, and the sample corpus's
+    warning carries an em dash. So:
+
+        PYTHONIOENCODING=cp1252       the em dash printed as a replacement character
+        PYTHONIOENCODING=ascii:strict UnicodeEncodeError, exit 1
+
+    The second is the one that matters. `--check` exists to say whether the corpus
+    loaded, and it failed with a traceback about punctuation while the corpus was
+    fine.
+
+    Three encodings, because the fix has to hold where the stream cannot represent the
+    character at all, not only where it can. Each run must give the same bytes.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    outputs = {}
+    for encoding in ("ascii:strict", "cp1252", "utf-8"):
+        done = subprocess.run(
+            [sys.executable, "-m", "paklaw.mcp_server", "--check"],
+            cwd=str(root),
+            capture_output=True,
+            timeout=300,
+            env={**os.environ, "PYTHONPATH": "src", "PYTHONIOENCODING": encoding},
+        )
+        assert done.returncode == 0, (encoding, done.stderr[-400:])
+        info = json.loads(done.stdout.decode("utf-8"))
+        assert "\u2014" in info["corpus_warning"], (encoding, info["corpus_warning"])
+        outputs[encoding] = done.stdout
+
+    assert len(set(outputs.values())) == 1, {k: len(v) for k, v in outputs.items()}
+
+
+def test_the_protocol_channel_was_never_the_problem_and_still_is_not():
+    """`serve` writes UTF-8 bytes to `sys.stdout.buffer`, below the text layer, so
+    reconfiguring that layer must not change what a client reads. Asserted because the
+    fix touches the stream the protocol runs over, and "it still works" is the only
+    thing that makes that fix safe."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    messages = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "t"},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "corpus_info", "arguments": {}},
+        },
+    ]
+    done = subprocess.run(
+        [sys.executable, "-m", "paklaw.mcp_server"],
+        cwd=str(root),
+        input=("\n".join(json.dumps(m) for m in messages) + "\n").encode(),
+        capture_output=True,
+        timeout=300,
+        env={**os.environ, "PYTHONPATH": "src", "PYTHONIOENCODING": "ascii:strict"},
+    )
+    assert done.returncode == 0, done.stderr[-400:]
+    replies = [json.loads(line) for line in done.stdout.decode("utf-8").splitlines() if line]
+    assert len(replies) == 2, replies
+    assert replies[1]["id"] == 2
+    # The em dash survives the pipe on a console that cannot represent it, because
+    # the protocol never goes through the console's codec.
+    assert "\u2014" in json.dumps(replies[1], ensure_ascii=False)

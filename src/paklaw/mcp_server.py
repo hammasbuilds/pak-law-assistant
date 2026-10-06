@@ -59,6 +59,13 @@ from .ingest import build_checked, read_corpus
 
 # Newest first. A client asking for one of these gets it; anything else gets the newest.
 PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
+#: Asked for work before the protocol version was agreed. Not one of JSON-RPC's own
+#: codes - the -32000..-32099 range is reserved for the server to define, and -32002
+#: is what MCP implementations conventionally use for this.
+NOT_INITIALIZED = -32002
+#: The two methods that are answerable before the handshake: one *is* the handshake,
+#: and `ping` has no response shape to negotiate.
+BEFORE_INITIALIZE = ("initialize", "ping")
 # structuredContent arrived in 2025-06-18; older clients get the text block only.
 _STRUCTURED = {"2025-11-25", "2025-06-18"}
 
@@ -1160,6 +1167,26 @@ class LawServer:
         try:
             if not isinstance(params, dict):
                 raise ProtocolError(INVALID_PARAMS, "params must be an object")
+            # The response shape is negotiated, so answering before the negotiation
+            # is answering under an assumption the client never made. `protocol_version`
+            # is None until `initialize`, and `None not in _STRUCTURED`, so a
+            # `tools/call` arriving cold used to come back *without*
+            # `structuredContent` and a `tools/list` without `outputSchema` - the
+            # degraded shape meant for a 2024 client, handed silently to a client that
+            # had said nothing at all. A client that skipped the handshake got a worse
+            # answer and no way to tell why.
+            #
+            # MCP puts the MUST on the client and a SHOULD on the server, and being
+            # lenient here looked harmless until the shapes were compared: see
+            # `test_mcp_server.test_the_answer_is_the_same_before_and_after_the_handshake`,
+            # which is what found this.
+            if method not in BEFORE_INITIALIZE and self.protocol_version is None:
+                raise ProtocolError(
+                    NOT_INITIALIZED,
+                    f"{method} before initialize: the response shape depends on the "
+                    "protocol version, which is agreed by the initialize handshake. "
+                    "Send initialize first.",
+                )
             if method == "initialize":
                 result = self._initialize(params)
             elif method == "ping":
@@ -1248,10 +1275,22 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.corpus_file:
         args.corpus = args.corpus_file
-    # Windows defaults stderr to the ANSI code page, and an em dash in a diagnostic
-    # reaches the client's log as a stray byte.
-    if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    # Windows defaults both text streams to the ANSI code page, and an em dash in a
+    # diagnostic reaches the client's log as a stray byte.
+    #
+    # stdout was left out of this, and stdout is where the only non-ASCII output
+    # actually goes: `--check` prints the corpus description with
+    # `ensure_ascii=False`, and the sample corpus's warning carries an em dash. On a
+    # cp1252 console that printed a replacement character; on an ASCII one it raised
+    # `UnicodeEncodeError: 'ascii' codec can't encode character '\u2014'` and exited
+    # 1, so the one subcommand whose job is to say whether the corpus loaded failed
+    # with a traceback about punctuation.
+    #
+    # The protocol channel is unaffected either way: `serve` writes UTF-8 bytes to
+    # `sys.stdout.buffer`, below the text layer being reconfigured here.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
     try:
         corpus, source = load_corpus(args.corpus)

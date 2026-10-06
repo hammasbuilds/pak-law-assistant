@@ -948,3 +948,64 @@ def test_every_question_in_every_set_is_in_the_printed_table():
         + len(FRESH_MUST_REFUSE)
     ) == 97, "the sets no longer total the 97 the README states"
     assert bench.main() == 0
+
+
+# -- the README's table against what the command prints -----------------------------
+
+
+def test_the_readme_table_is_the_one_this_prints():
+    """`bench.py` has named this test since it was written, and it did not exist.
+
+    The module docstring said "`test_the_readme_table_is_the_one_this_prints` checks
+    the README against what it prints, so the two cannot drift apart", and nothing
+    did. The two tests that were there check the totals and the per-set sizes by
+    recomputing them - which is the right thing and a different thing: they would pass
+    on a README whose table was indented differently, labelled differently, or quoting
+    a column the command no longer prints.
+
+    This runs the command and compares. The README quotes the table and then explains
+    the one wrong answer in prose, so the fenced block is the leading part of the
+    output rather than all of it - asserted as a prefix, line for line, with the lines
+    it stops before named so a change to the tail is visible here too.
+    """
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    done = subprocess.run(
+        [sys.executable, str(root / "tests" / "bench.py")],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    assert done.returncode == 0, done.stdout[-800:] + done.stderr[-800:]
+
+    printed = [line.rstrip() for line in done.stdout.strip().split("\n")]
+    assert printed[0] == "RETRIEVAL QUALITY", printed[:2]
+
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    fenced = readme.split("### Retrieval quality", 1)[1].split("```")[1]
+    quoted = [line.rstrip() for line in fenced.strip().split("\n")]
+    assert quoted[0] == "$ python tests/bench.py", quoted[:1]
+    quoted = [line for line in quoted[1:] if line]
+
+    actual = [line for line in printed if line]
+    assert len(quoted) <= len(actual), (len(quoted), len(actual))
+    for i, (want, got) in enumerate(zip(quoted, actual, strict=False)):
+        assert want == got, f"line {i}:\n  README: {want!r}\n  printed: {got!r}"
+
+    # What the block deliberately stops before: the explanation and the named wrong
+    # answer, which the README gives in prose instead. Named here so that if the
+    # command stops printing them, this test says so rather than passing on a prefix
+    # that has quietly become the whole output.
+    tail = actual[len(quoted) :]
+    assert tail, "the README block is now the whole output; the explanation is gone"
+    # Joined, because the explanation is wrapped and a phrase spans two printed lines.
+    joined = " ".join(line.strip() for line in tail)
+    assert "only column that matters" in joined, tail
+    assert "WRONG ANSWERS" in joined, tail
+    assert "Section 55A PPC" in joined, tail
+
+    # And the prose does name it, which is the part a reader relies on.
+    assert "s.55A rather than s.54" in readme

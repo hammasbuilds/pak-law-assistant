@@ -22,6 +22,7 @@ from paklaw.mcp_server import (
     INVALID_PARAMS,
     INVALID_REQUEST,
     METHOD_NOT_FOUND,
+    NOT_INITIALIZED,
     PARSE_ERROR,
     PROTOCOL_VERSIONS,
     SAMPLE_WARNING,
@@ -825,6 +826,9 @@ def test_a_call_with_no_tool_named_says_so():
     """ "unknown tool: None" named the wrong problem: nothing was asked for, rather than
     something unrecognised being asked for. Both messages now list the tools."""
     server = LawServer(*load_corpus(None))
+    # The handshake first: a `tools/call` before it is refused as -32002 regardless of
+    # its arguments, which would make this test pass for the wrong reason.
+    server.handle(init())
     missing = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call"})
     assert missing["error"]["code"] == INVALID_PARAMS
     assert "needs params.name" in missing["error"]["message"]
@@ -917,3 +921,81 @@ def test_an_empty_argument_is_not_reported_as_a_missing_one():
         text = empty["content"][0]["text"]
         assert text == "'question' was given but is empty; it needs the actual text", (blank, text)
         assert "is required" not in text, blank
+
+
+# -- the lifecycle ----------------------------------------------------------------
+
+
+def test_a_tool_call_before_initialize_is_refused():
+    """It used to be answered, in the wrong shape.
+
+    `protocol_version` is None until the handshake and `None not in _STRUCTURED`, so a
+    `tools/call` arriving cold came back *without* `structuredContent` and a
+    `tools/list` without `outputSchema` - the degraded shape meant for a 2024 client,
+    handed silently to a client that had declared nothing. The caller got a worse
+    answer than the server can give and no way to tell why.
+
+    MCP puts the MUST on the client and only a SHOULD on the server, and leniency here
+    looked harmless until the two shapes were compared. They are not the same answer,
+    so there is nothing to be lenient about: the response shape is negotiated, and
+    answering before the negotiation is answering under an assumption the client never
+    made.
+    """
+    replies = run(
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "answer_question",
+                    "arguments": {"question": "penalty", "as_of": "2026-01-01"},
+                },
+            }
+        ]
+    )
+    assert len(replies) == 1, replies
+    error = replies[0]["error"]
+    assert error["code"] == NOT_INITIALIZED, error
+    assert "before initialize" in error["message"]
+    assert "initialize first" in error["message"].lower()
+
+
+def test_tools_list_before_initialize_is_refused_too():
+    """The same reason: `outputSchema` is withheld before the version is agreed, so an
+    early listing advertises a smaller contract than the server honours."""
+    replies = run([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+    assert replies[0]["error"]["code"] == NOT_INITIALIZED, replies
+
+
+@pytest.mark.parametrize("method", ["initialize", "ping"])
+def test_the_two_methods_answerable_cold_still_are(method):
+    """One *is* the handshake and `ping` has no response shape to negotiate. A gate
+    that refused either would refuse every client."""
+    message = init() if method == "initialize" else {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    reply = run([message])[0]
+    assert "result" in reply, reply
+
+
+def test_the_answer_is_the_same_before_and_after_the_handshake():
+    """What the refusal is protecting, stated as the comparison that found it.
+
+    With the gate in place the cold call is an error rather than a different answer,
+    which is the only honest pair of outcomes: identical, or refused. Silently
+    different was the third, and it was what the server did.
+    """
+    arguments = {"question": "penalty for publicly transmitting false information"}
+    arguments["as_of"] = "2026-01-01"
+    request = {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "tools/call",
+        "params": {"name": "answer_question", "arguments": arguments},
+    }
+
+    cold = run([request])[0]
+    assert "error" in cold, cold
+
+    warm = run([init(), {"jsonrpc": "2.0", "method": "notifications/initialized"}, request])[-1]
+    assert "result" in warm, warm
+    assert "structuredContent" in warm["result"], sorted(warm["result"])
