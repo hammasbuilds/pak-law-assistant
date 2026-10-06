@@ -805,3 +805,54 @@ def test_the_readme_quotes_the_totals_these_sets_actually_produce(assistant):
         if assistant.answer(question, as_of="2026-01-01").refused
     )
     assert held == len(MUST_REFUSE) + len(FRESH_MUST_REFUSE)
+
+
+def test_the_three_question_sets_are_the_sizes_the_readme_describes():
+    """So the denominator cannot shrink quietly.
+
+    `test_the_readme_quotes_the_totals_these_sets_actually_produce` recomputes
+    right/wrong/refused and checks they sum to the whole population, which stops a
+    question being dropped from the count. It does not stop a question being dropped
+    from the *set*: delete one and `total` falls with it, the README is updated to
+    match, and nothing says the benchmark got smaller.
+
+    The README describes the sets by size and by when they were written. Those sizes
+    are the claim, so they are asserted here, and growing a set is a deliberate edit
+    to this test rather than a silent one.
+    """
+    import re
+    from pathlib import Path
+
+    assert (len(ANSWERABLE), len(PARAPHRASES), len(FRESH)) == (17, 34, 20)
+    assert (len(MUST_REFUSE), len(FRESH_MUST_REFUSE)) == (10, 10)
+    assert len(ANSWERABLE) + len(PARAPHRASES) + len(FRESH) == 71
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    described = re.search(
+        r"(\d+) in a person's words \(\d+ right\), (\d+) paraphrases of them.*?"
+        r"and (\d+) written later again",
+        readme.replace("\n", " "),
+    )
+    assert described, "the README no longer describes the three sets"
+    assert tuple(int(g) for g in described.groups()) == (
+        len(ANSWERABLE),
+        len(PARAPHRASES),
+        len(FRESH),
+    )
+
+    unheld = re.search(r"\*\*(\d+) subjects the corpus does not hold, all \d+ refused\*\*", readme)
+    assert unheld, "the README no longer states the unanswerable count"
+    assert int(unheld.group(1)) == len(MUST_REFUSE) + len(FRESH_MUST_REFUSE)
+
+
+def test_no_question_appears_in_two_sets():
+    """Three sets written at three different times, so an overlap is an accident -
+    and a duplicated question is counted twice in a total that reads as 71 distinct
+    ones."""
+    asked = [q for q, _ in ANSWERABLE + PARAPHRASES + FRESH]
+    duplicates = {q for q in asked if asked.count(q) > 1}
+    assert duplicates == set(), duplicates
+
+    refusable = MUST_REFUSE + FRESH_MUST_REFUSE
+    assert len(set(refusable)) == len(refusable)
+    assert set(asked).isdisjoint(refusable), "a question cannot be both answerable and not"
