@@ -143,9 +143,16 @@ def test_common_names_as_statute_argument():
 
 
 def test_whitespace_question_is_a_tool_error():
+    """And the message says it was given and blank, not that it is missing.
+
+    `"required"` was the assertion here, which is what the server said for a key the
+    caller had included - so a model reading it would send the key it already sent.
+    """
     result = tool("answer_question", {"question": "   \n", "as_of": "2024-01-01"})
     assert result["isError"]
-    assert "required" in result["content"][0]["text"]
+    assert result["content"][0]["text"] == (
+        "'question' was given but is empty; it needs the actual text"
+    )
 
 
 def test_reversed_dates_are_reported():

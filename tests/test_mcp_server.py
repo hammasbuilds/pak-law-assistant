@@ -895,3 +895,25 @@ def test_every_output_validates_under_a_real_validator(name, arguments):
         for error in jsonschema.Draft202012Validator(schemas[name]).iter_errors(payload)
     ]
     assert problems == []
+
+
+# -- a message that describes the input it got --------------------------------
+
+
+def test_an_empty_argument_is_not_reported_as_a_missing_one():
+    """`'question' is required` for `{"question": ""}` names a key the caller sent.
+
+    A model reading that adds the key it already has rather than putting a question in
+    it, and loops. The two cases are distinguished now: absent is "is required", present
+    and blank is "was given but is empty".
+    """
+    missing = tool("answer_question", {"as_of": "2026-01-01"})
+    assert missing["isError"] is True
+    assert missing["content"][0]["text"] == "'question' is required"
+
+    for blank in ("", "   ", "\t\n"):
+        empty = tool("answer_question", {"question": blank, "as_of": "2026-01-01"})
+        assert empty["isError"] is True
+        text = empty["content"][0]["text"]
+        assert text == "'question' was given but is empty; it needs the actual text", (blank, text)
+        assert "is required" not in text, blank

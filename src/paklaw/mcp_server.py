@@ -758,9 +758,15 @@ def _string(arguments: dict, name: str, *, required: bool = False) -> str | None
         raise ToolError(
             f"'{name}' is {len(value):,} characters; the limit is {TEXT_LIMIT:,}. Send it in parts."
         )
+    supplied = value is not None
     value = (value or "").strip()
     if not value:
         # Whitespace is as empty as "": answering it would be a refusal about nothing.
+        # But the message has to say which it was. `'question' is required` sent back
+        # for `{"question": ""}` describes a key the caller did include, and a model
+        # reading it will add the key it already sent rather than put a question in it.
+        if required and supplied:
+            raise ToolError(f"'{name}' was given but is empty; it needs the actual text")
         if required:
             raise ToolError(f"'{name}' is required")
         return None
