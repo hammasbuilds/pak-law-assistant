@@ -217,3 +217,112 @@ def test_pakistani_org_history_undoes_amendments_by_date():
     assert "fasad-fil-arz" in now
     assert "fasad-fil-arz" not in before_2016
     assert "\x01" not in now and "\x02" not in before_2016
+
+
+def _sample_assistant():
+    """A LawAssistant over the shipped three-provision sample."""
+    import json as _json
+    from importlib import resources
+
+    from paklaw.answer import LawAssistant
+
+    rows = _json.loads(resources.files("paklaw").joinpath("sample_corpus.json").read_text("utf-8"))
+    return LawAssistant(build(rows if isinstance(rows, list) else rows["provisions"]))
+
+
+# -- all nine refusal conditions, on the tool a caller actually uses ------
+
+
+def test_the_readme_lists_the_refusal_statuses_the_code_can_set():
+    """The README calls them "Nine refusal conditions" and tabulates the token for
+    each. Nothing checked the two lists against each other, so a status could be
+    added, renamed or dropped and the table would still read as an inventory.
+    """
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "src" / "paklaw" / "answer.py").read_text(
+        encoding="utf-8"
+    )
+    in_code = set(re.findall(r'refusal_status = "([a-z_]+)"', source))
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    section = readme[readme.index("## Nine refusal conditions") :]
+    section = section[: section.index("Every refusal carries")]
+    # The header cell is literally `refusal_status`, so drop the column's own name.
+    in_readme = set(re.findall(r"`([a-z_]+)`\s*\|", section)) - {"refusal_status"}
+
+    assert in_code == in_readme, (
+        f"only in the code: {sorted(in_code - in_readme)}; "
+        f"only in the README: {sorted(in_readme - in_code)}"
+    )
+    assert len(in_code) == 9, f"the heading says nine; the code sets {len(in_code)}"
+
+
+@pytest.mark.parametrize(
+    ("question", "as_of", "statute", "status"),
+    [
+        # Nothing in the corpus is about this subject at all.
+        (
+            "what is the punishment for dacoity with murder?",
+            "2026-01-01",
+            None,
+            "subject_not_in_corpus",
+        ),
+        # A citation with no Act. s.302 IPC is murder; s.302 PPC is qatl-i-amd.
+        (
+            "what is the punishment for murder under section 302?",
+            "2026-01-01",
+            None,
+            "no_act_named",
+        ),
+        # An Act that was named and is not one this corpus holds.
+        (
+            "what is the punishment for murder under the Indian Penal Code?",
+            "2026-01-01",
+            None,
+            "act_not_recognised",
+        ),
+        # A cited section this corpus does not have.
+        ("what does section 500 PPC say?", "2026-01-01", None, "unknown_provision"),
+        # The provision exists and was not in force on the date asked about.
+        ("what is the penalty under section 20 PECA?", "1990-01-01", None, "not_in_force"),
+        # A qualifier that selects a neighbouring offence the corpus does not hold.
+        ("what is the punishment for attempt to murder?", "2026-01-01", None, "different_offence"),
+    ],
+)
+def test_each_refusal_condition_fires_on_the_answer_path(question, as_of, statute, status):
+    """Six of the nine were only asserted behaviourally, or on another tool.
+
+    `no_act_named` was tested through `provision_history` and through ingest, and not
+    through `answer_question` - which is the call a client makes and the path a bare
+    "section 302" actually arrives on. A refusal condition tested somewhere else is
+    not tested where it matters.
+    """
+    assistant = _sample_assistant()
+    kwargs = {"statute": statute} if statute else {}
+    answer = assistant.answer(question, as_of=as_of, **kwargs)
+
+    assert answer.refused, f"expected a refusal, got {answer.passages[0].citation}"
+    assert answer.refusal_status == status, answer.refusal_reason
+    assert answer.refusal_reason, "a refusal with no reason is not a refusal a caller can act on"
+    assert answer.passages == []
+
+
+def test_a_refusal_never_carries_a_passage_and_an_answer_always_does():
+    """The two halves of the contract, over every question in this file's cases."""
+    assistant = _sample_assistant()
+    for question in (
+        "what is the punishment for murder?",
+        "what is the punishment for dacoity with murder?",
+        "what are the offences against the dignity of a natural person?",
+        "what is the punishment for murder under section 302?",
+    ):
+        answer = assistant.answer(question, as_of="2026-01-01")
+        if answer.refused:
+            assert answer.passages == []
+            assert answer.refusal_status and answer.refusal_reason
+        else:
+            assert answer.passages
+            assert answer.refusal_status == ""
+            assert answer.refusal_reason == ""
