@@ -1,0 +1,20 @@
+INPUT
+   corpus             3 provisions, 4 versions (PECA s.20 twice: pre- and post-2022)
+   as_of 2026-01-01   "What is the penalty for publicly transmitting false inform..."
+   as_of 2020-06-01   "What is the penalty for publicly transmitting false inform..."
+   as_of 2026-01-01   "What are the registration requirements for a private limit..."
+
+OUTPUT
+   [1] asked about today
+       Section 20 PECA
+       in force   2022-02-20 -> present
+       ...shall be punished with imprisonment which may extend to five years or with fine which may extend to ten million rupees or with both.
+
+   [2] the same question, asked about 2020
+       Section 20 PECA
+       in force   2016-08-19 -> 2022-02-20
+       ...shall be punished with imprisonment which may extend to three years or with fine which may extend to one million rupees or with both.
+
+   [3] nothing in the corpus covers this
+       REFUSED    no provision in this corpus contains a word the question turns on, in any form: 'company', 'limited', 'private', 'registration', 'requirements' appear in no provision here, and nothing else in the question matched either.
+

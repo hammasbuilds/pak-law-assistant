@@ -951,12 +951,29 @@ def test_an_unrecognised_act_stays_in_the_citation_it_was_written_in():
 # It earned its place immediately: it found `list_provisions` refusing with a
 # `refusal_status` the shared enum did not list, on the one path no case covered.
 
-jsonschema = pytest.importorskip("jsonschema", reason="dev dependency; see [dependency-groups]")
+
+@pytest.fixture
+def jsonschema():
+    """The validator, or a skip of the two tests that need it - not of this module.
+
+    This was `jsonschema = pytest.importorskip(...)` at module level. A module-level
+    importorskip raises during COLLECTION, so without the dev group installed this
+    whole file was dropped - and `tests/test_user_review.py` imports `body`, `call`,
+    `init`, `run` and `tool` from here, so it was dropped too. The run printed
+
+        333 passed, 2 skipped
+
+    where the suite is 495: 140 protocol tests and 22 review tests gone, announced as
+    two skips. As a fixture, the skip lands on the two tests that actually use the
+    validator and the count tells the truth. `tests/test_suite_integrity.py` asserts
+    the shape so it cannot move back up.
+    """
+    return pytest.importorskip("jsonschema", reason="dev dependency; see [dependency-groups]")
 
 
 @pytest.mark.parametrize("tool", TOOLS, ids=lambda t: t["name"])
 @pytest.mark.parametrize("which", ["inputSchema", "outputSchema"])
-def test_the_declared_schemas_are_valid_json_schema(tool, which):
+def test_the_declared_schemas_are_valid_json_schema(jsonschema, tool, which):
     """A schema that is not valid JSON Schema is a schema no client can use."""
     schema = tool.get(which)
     assert schema is not None, f"{tool['name']} declares no {which}"
@@ -964,7 +981,7 @@ def test_the_declared_schemas_are_valid_json_schema(tool, which):
 
 
 @pytest.mark.parametrize("name,arguments", _OUTPUT_CASES)
-def test_every_output_validates_under_a_real_validator(name, arguments):
+def test_every_output_validates_under_a_real_validator(jsonschema, name, arguments):
     """The same cases the hand-rolled walker runs, under a specification implementation.
 
     Both, rather than either: the walker catches a key that is returned and never

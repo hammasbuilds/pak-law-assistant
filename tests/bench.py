@@ -88,7 +88,84 @@ def refusals(assistant: LawAssistant, name: str, note: str, questions) -> Result
     return out
 
 
-def main() -> int:
+def _without_the_vocabulary_rule(assistant: LawAssistant) -> LawAssistant:
+    """The same assistant with the unknown-term refusal disabled.
+
+    The rule: a question containing a word that appears in no provision of the corpus
+    is refused outright, because the corpus cannot be shown to hold the subject. It
+    costs recall - "does the word animal cover a bird?" is refused over *bird* - and
+    the README quotes a measurement of what removing it buys and costs.
+
+    Removed by emptying `Hit.unknown_terms`, which is the field `answer.py` reads, so
+    the thing measured is this build with one rule off rather than an edited copy of
+    the module. Monkeypatching the search is deliberate and local to this function.
+    """
+    search = assistant.search
+    original = search.search
+
+    def without(*args, **kwargs):
+        hits = original(*args, **kwargs)
+        for hit in hits:
+            hit.unknown_terms = []
+        return hits
+
+    search.search = without  # type: ignore[method-assign]
+    return assistant
+
+
+def _ablation() -> int:
+    """Both sides of the trade, printed rather than recalled."""
+    rows = _corpus_rows()
+    answerable_sets = (
+        ("in a person's words", ANSWERABLE),
+        ("paraphrases", PARAPHRASES),
+        ("written later again", FRESH),
+    )
+    refusal_sets = (
+        ("not in corpus (set 1)", UNANSWERABLE),
+        ("not in corpus (set 2)", MUST_REFUSE),
+        ("not in corpus (set 3)", FRESH_MUST_REFUSE),
+        ("in corpus, unanswerable", list(IN_VOCABULARY_MUST_REFUSE)),
+    )
+
+    print("\nTHE VOCABULARY RULE, BOTH WAYS")
+    print("=" * 70)
+    print(
+        "  A question containing a word that appears in no provision is refused.\n"
+        "  This is what that rule buys and what it costs, on the same 105 questions."
+    )
+    print()
+    print(f"  {'':<22} {'right':>6} {'wrong':>6} {'refused':>8} {'answered anyway':>16}")
+    print("  " + "-" * 64)
+
+    wrong_answers: dict[str, list[tuple[str, str, str]]] = {}
+    for label, build in (("as shipped", False), ("rule removed", True)):
+        assistant = LawAssistant(corpus=build_checked(rows, source="fixtures"))
+        if build:
+            assistant = _without_the_vocabulary_rule(assistant)
+        answerable = [score(assistant, name, "", pairs) for name, pairs in answerable_sets]
+        must_refuse = [refusals(assistant, name, "", qs) for name, qs in refusal_sets]
+        right = sum(len(r.right) for r in answerable)
+        wrong = sum(len(r.wrong) for r in answerable)
+        held = sum(len(r.refused) for r in answerable)
+        anyway = sum(len(r.wrong) for r in must_refuse)
+        print(f"  {label:<22} {right:>6} {wrong:>6} {held:>8} {anyway:>16}")
+        wrong_answers[label] = [w for r in answerable + must_refuse for w in r.wrong]
+
+    print("  " + "-" * 64)
+    for label, found in wrong_answers.items():
+        if not found:
+            print(f"  {label}: no wrong citations")
+            continue
+        print(f"  {label}: {len(found)} wrong citation(s)")
+        for question, expected, got in found:
+            print(f"    {question!r}\n      expected {expected}, got {got}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    if "--ablate" in (argv if argv is not None else sys.argv[1:]):
+        return _ablation()
     assistant = LawAssistant(corpus=build_checked(_corpus_rows(), source="fixtures"))
 
     answerable = [

@@ -109,7 +109,21 @@ class TestCitationParsing:
         assert citations[0].pretty() == "Order XXXIX Rule 1 CPC"
 
     def test_subordinate_legislation(self):
-        assert parse("Notified via SRO 1125(I)/2011")[0].key == "SRO:1125:2011"
+        """The series marker is part of the number.
+
+        This asserted `SRO:1125:2011` for `SRO 1125(I)/2011`: the pattern captured the
+        roman numeral in a group named `series` and nothing read it, so
+        `SRO 1125(I)/2011` and `SRO 1125(II)/2011` - different instruments, from
+        different ministry sequences - resolved to one key. One instrument written
+        several ways resolving to one key is the point of these keys; two instruments
+        doing it is the same defect pointed the other way.
+        """
+        assert parse("Notified via SRO 1125(I)/2011")[0].key == "SRO:1125(I):2011"
+        assert parse("SRO 1125(II)/2011")[0].key == "SRO:1125(II):2011"
+        assert parse("SRO 1125/2011")[0].key == "SRO:1125:2011"
+        # And the written forms of one SRO still meet.
+        assert parse("S.R.O. 1125(I)/2011")[0].key == parse("SRO 1125(I)/2011")[0].key
+        assert parse("SRO 1125(I)/2011")[0].pretty() == "SRO 1125(I)/2011"
 
     @pytest.mark.parametrize(
         ("text", "key"),

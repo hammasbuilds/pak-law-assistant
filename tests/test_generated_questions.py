@@ -85,10 +85,18 @@ _COMMON = {
 
 #: The measurement, pinned. `right + wrong + refused` is asserted against the count of
 #: questions, so none of the three can move without one of the others.
-EXPECTED = {"asked": 101, "right": 87, "wrong": 5, "refused": 9}
+#:
+#: 121, not 101: the population is four questions per provision and the corpus went
+#: from 26 provisions to 31 when the importer stopped folding ss.58-66 into s.57. It
+#: was 87 right, 5 wrong, 9 refused over 101 - 86% right; it is 110 / 3 / 8 over 121,
+#: which is 91%, on a strictly larger set of questions.
+EXPECTED = {"asked": 121, "right": 110, "wrong": 3, "refused": 8}
 
-#: Of the five, the ones where the question's every word is in the cited provision as
-#: well as in the expected one. Named, because "three are ambiguous" is a claim and
+#: Of the three, the ones where the question's every word is in the cited provision as
+#: well as in the expected one. All of them, now: s.54 and s.55 commute death and
+#: imprisonment for life and share the Provincial Government proviso almost verbatim,
+#: and s.64 and s.65 are both about imprisonment for non-payment of a fine. Named,
+#: because "all three are ambiguous" is a claim and
 #: `test_the_ambiguous_mistakes_really_are_ambiguous` is what makes it checkable.
 AMBIGUOUS = 3
 
@@ -151,12 +159,16 @@ def test_the_figures_are_the_ones_the_docstring_states(corpus, assistant):
 
 
 def test_the_ambiguous_mistakes_really_are_ambiguous(corpus, assistant):
-    """Three of the five are counted as mistakes and are not.
+    """All three counted as mistakes are not; it was three of five.
 
     A window of four words drawn from s.55 can be a true description of s.54 - both
     are about commutation by the provincial government - so the generator's
     expectation is arbitrary. Asserted rather than asserted-in-prose: a question whose
     every word appears in the cited provision too is one this test cannot judge.
+
+    `AMBIGUOUS == len(mistakes)` is asserted as well as `AMBIGUOUS == both`, because
+    "all three" is a stronger claim than "three" and it would otherwise survive a
+    fourth, genuine mistake appearing beside them.
     """
     _, mistakes = _measure(corpus, assistant)
     texts = {p.citation().pretty(): p.text.lower() for p in corpus.provisions}
@@ -169,13 +181,16 @@ def test_the_ambiguous_mistakes_really_are_ambiguous(corpus, assistant):
         ):
             both += 1
     assert both == AMBIGUOUS, [m for m in mistakes]
+    assert len(mistakes) == AMBIGUOUS, (
+        f"a mistake that is not one of the ambiguous pairs has appeared: {[m for m in mistakes]}"
+    )
 
 
 def test_the_refusal_share_is_what_it_says(corpus, assistant):
     """The number this repository could not see.
 
     It was a quarter, and 26 of those 27 were the heading questions - refused because
-    `say`, `tell` and `show` were read as the subject of the question. It is 9 of 101
+    `say`, `tell` and `show` were read as the subject of the question. It is 8 of 121
     now. Bounded rather than pinned on its own: the exact counts are pinned by
     `test_the_figures_are_the_ones_the_docstring_states`, and this says the share is
     small, which is the claim.

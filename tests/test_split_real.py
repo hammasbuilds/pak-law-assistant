@@ -107,6 +107,14 @@ class TestPakistanCode:
         assert note.text.endswith("23rd March, 1956).")
 
     def test_the_contents_decide_numbers_and_headings(self, parsed):
+        """And where the contents stop, an ascending run of headings continues them.
+
+        This listed thirteen provisions, which is what the CONTENTS of a three-page
+        excerpt lists. The text runs on to s.66, and those nine were folded into s.57 -
+        reported as `swallowed_headings` and left there. ss.58, 59, 61 and 62 are
+        omitted or repealed in the source, so they are still reported rather than
+        loaded; 60, 63, 64, 65 and 66 are provisions and are now parsed as provisions.
+        """
         rows, report = parsed
         numbers = [r["number"] for r in rows]
         assert numbers == [
@@ -123,7 +131,19 @@ class TestPakistanCode:
             "55",
             "55A",
             "57",
+            "60",
+            "63",
+            "64",
+            "65",
+            "66",
         ]
+        # s.57 is its own section again, not ten of them. 141 characters against the
+        # 1,800 it held, which is the figure the retrieval failure came from: BM25
+        # penalises length, so the provision that answers "how many years is
+        # imprisonment for life" lost to s.302 for being nine sections long.
+        assert len(by_number(rows)["57"]["text"]) < 200, len(by_number(rows)["57"]["text"])
+        assert by_number(rows)["57"]["text"].startswith("In calculating fractions")
+        assert by_number(rows)["66"]["heading"].startswith("Description of imprisonment")
         assert by_number(rows)["47"]["heading"] == '"Animal"'
         assert by_number(rows)["47"]["text"].startswith("The word “animal” denotes")
         assert report["missing_from_contents"] == []
@@ -211,9 +231,11 @@ def test_the_command_line_reads_a_pakistan_code_pdf_text(tmp_path, capsys):
     args = ["import", str(source), "--source", "pakistan-code", "--statute", "PPC"]
     assert main([*args, "--in-force-from", "2016-01-01", "-o", str(corpus)]) == 0
     captured = capsys.readouterr()
-    assert json.loads(captured.out)["provisions"] == 13
-    assert "imported 13 provision(s)" in captured.err
-    assert "1 omitted or repealed" in captured.err
+    assert json.loads(captured.out)["provisions"] == 18
+    assert "imported 18 provision(s)" in captured.err
+    # Five: s.56, which the contents list as repealed, and ss.58, 59, 61 and 62, which
+    # the text brackets as omitted and which used to be invisible inside s.57's body.
+    assert "5 omitted or repealed" in captured.err
 
 
 # --- an exported helper with no caller had already drifted ----------------------------
@@ -253,7 +275,11 @@ def test_include_repealed_asks_for_the_layout_instead():
     every = [n for n, _, _ in provision_spans(text, include_repealed=True)]
     assert "56" not in default
     assert "56" in every
-    assert set(every) - set(default) == {"56"}
+    # Five, not one. ss.58, 59, 61 and 62 are "[...] Omitted by" or "Rep. by" in the
+    # source and were invisible to this comparison while all nine sat inside s.57's
+    # body; now that the run after the contents is parsed, they are repealed headings
+    # like s.56 and behave like it.
+    assert set(every) - set(default) == {"56", "58", "59", "61", "62"}
 
 
 def test_spans_cover_the_text_without_overlapping():
@@ -268,22 +294,58 @@ def test_spans_cover_the_text_without_overlapping():
 
 
 def test_a_provision_holding_nine_others_is_reported():
-    """The accounting only ever ran one way.
+    """Reported for a while, and now parsed.
 
     `missing_from_contents` catches a contents entry with no body. Nothing caught a
     body with no contents entry - so when the contents stop at s.57 and the text runs
     on to s.66, nine sections were folded into s.57's body and the import reported no
-    problem. The consequence is not cosmetic: a provision holding nine others matches
-    almost any question about punishment, and wins on coverage.
+    problem. Then it reported one, and the report was all it did: the nine stayed
+    inside s.57, which made it 1,800 characters holding ten provisions. That is not
+    cosmetic, and it cost a citation - BM25 penalises length, so s.57, whose own words
+    answer "how many years is imprisonment for life", lost to s.302.
+
+    The detector's own rule - an ascending run of numbers each followed by a
+    capitalised title - is now what the parser uses to continue a contents list that
+    stopped, so there is nothing left to report here.
     """
     text = strip_stars(pakistan_code(read("ppc_pakistan_code_pp39-41.txt")).text)
     rows, report = split_act(text, statute="PPC", in_force_from="2016-01-01")
-    assert report["swallowed_headings"] == [
-        {
-            "provision": "section 57",
-            "appears_to_contain": ["58", "59", "60", "61", "62", "63", "64", "65", "66"],
-        }
-    ]
+    assert report["swallowed_headings"] == []
+    # The nine are accounted for: five are provisions, four are repealed headings the
+    # source itself brackets, and none of them is inside s.57 any more.
+    numbers = {r["number"] for r in rows}
+    assert {"60", "63", "64", "65", "66"} <= numbers
+    assert not {"58", "59", "61", "62"} & numbers
+    for number in ("58", "59", "61", "62"):
+        assert any(line.startswith(f"section {number}:") for line in report["omitted_or_repealed"])
+    assert "58." not in by_number(rows)["57"]["text"]
+
+
+def test_a_run_the_parser_cannot_claim_is_still_reported():
+    """The detector has to keep working, or removing its only live case retires it.
+
+    The parser continues a contents list through CONSECUTIVE numbers, because that is
+    what a page-range excerpt looks like. A body holding non-consecutive later headings
+    is a different shape - a gap means something else is going on - and it is still
+    reported rather than guessed at.
+    """
+    from paklaw.split import buried_numbers
+
+    body = (
+        "In calculating fractions of terms of punishment, imprisonment for life "
+        "shall be reckoned as equivalent to imprisonment for twenty-five years.\n"
+        "59. Transportation instead of imprisonment. Where any person is sentenced "
+        "to transportation, the Court may award imprisonment.\n"
+        "63. Amount of fine. Where no sum is expressed to which a fine may extend, "
+        "the amount is unlimited.\n"
+        "71. Limit of punishment of offence made up of several offences. Where "
+        "anything is an offence falling within two definitions.\n"
+    )
+    assert buried_numbers(body, "57") == ["59", "63", "71"]
+
+    # And a citation of an earlier section is not a heading, which is what keeps this
+    # from firing on every provision in a statute book.
+    assert buried_numbers("punishable under section 304 of this Code.", "57") == []
 
 
 @pytest.mark.parametrize(

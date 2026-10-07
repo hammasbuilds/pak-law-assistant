@@ -519,12 +519,22 @@ def locate(text: str, *, statutes: dict[str, str] | None = None) -> list[tuple[i
 
     for match in _SRO.finditer(text):
         if claim(match):
+            # The series marker is part of the number. `SRO 1125(I)/2011` and `SRO
+            # 1125(II)/2011` are different instruments; both used to parse to the key
+            # `SRO::1125` and print as `SRO 1125/2011`, because this pattern captured
+            # `series` and nothing read it. Two instruments resolving to one key is the
+            # same defect as one instrument resolving to two, in the direction that
+            # silently merges them.
+            series = match.group("series")
+            number = (
+                f"{match.group('number')}({series.upper()})" if series else (match.group("number"))
+            )
             found.append(
                 (
                     match.start(),
                     Citation(
                         kind="subordinate",
-                        provision=match.group("number"),
+                        provision=number,
                         year=match.group("year"),
                         raw=match.group(0),
                     ),

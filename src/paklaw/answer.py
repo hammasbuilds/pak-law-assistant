@@ -214,7 +214,7 @@ class LawAssistant:
             key = self.corpus.resolve(f"{citation.statute}:{citation.unit}:{citation.provision}")
             if not self.corpus.versions(key):
                 continue
-            if self.corpus.version_on(key, as_of) is None:
+            if self.search.by_citation(key, as_of=as_of) is None:
                 # Describe the version nearest the date. The latest one says a provision
                 # asked about before its first enactment "commenced" at its last amendment.
                 versions = self.corpus.versions(key)
@@ -306,7 +306,7 @@ class LawAssistant:
                 if not self.corpus.versions(key):
                     unknown.append(citation.pretty())
                     continue
-                provision = self.corpus.version_on(key, as_of_date)
+                provision = self.search.by_citation(key, as_of=as_of_date)
                 if provision is None:
                     continue  # already recorded in `superseded`
                 if key != cited_key:
@@ -432,8 +432,14 @@ class LawAssistant:
         if hits[0].score < self.min_score:
             result.refused = True
             result.refusal_status = "weak_match"
+            # Three decimals, not two. The comparison is on unrounded floats, so
+            # "solitary confinement limits" - whose best score is 1.0009 against a
+            # threshold of 1.0010 - refused with "(best score 1.00 below 1.00)": two
+            # identical numbers and the word "below", which reads as a bug in the tool
+            # rather than as a near miss in the corpus. The precision printed has to be
+            # fine enough to show the difference the decision was made on.
             result.refusal_reason = (
-                f"{REFUSAL_WEAK} (best score {hits[0].score:.2f} below {self.min_score:.2f})"
+                f"{REFUSAL_WEAK} (best score {hits[0].score:.3f} below {self.min_score:.3f})"
             )
             return result
 

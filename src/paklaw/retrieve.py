@@ -24,7 +24,7 @@ import datetime as dt
 import math
 import re
 from collections import Counter, OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Container, Sequence
 from dataclasses import dataclass, field
 
 from .corpus import Corpus, Provision
@@ -441,17 +441,32 @@ def _fold(token: str) -> str:
     return folded or token
 
 
-def tokenise(text: str, *, keep_stopwords: bool = False) -> list[str]:
+def tokenise(
+    text: str, *, keep_stopwords: bool = False, defined: Container[str] | None = None
+) -> list[str]:
     """Words, lowercased. Urdu script is preserved as its own tokens.
 
     Legal numbers are kept: "302" is one of the most discriminating tokens in a penal
     code, and a tokeniser that drops digits loses the ability to find a section by its
     number.
+
+    `defined` is a set of words this corpus DEFINES, and a word in it survives even if
+    it is a stopword. A statute book defines the words it uses, so its most ordinary
+    words are also the subjects of its definition provisions: PPC s.50 is headed
+    "Section" and defines that word, and dropping "section" as a stopword left
+    `tokenise("what does section denote?")` as `['denote']` - the only word
+    identifying the provision gone before anything was scored, and the answer was
+    s.47, "Animal".
+
+    Not an exception to the stopword rule but a correction of it. "section" occurs in
+    most provisions, so it ranks nothing by itself; what it does is let the provision
+    whose SUBJECT is that word be reachable at all.
     """
     tokens = [_fold(t.lower()) for t in _TOKEN.findall(text)]
     if keep_stopwords:
         return tokens
-    return [t for t in tokens if t not in LEGAL_STOPWORDS]
+    keep = defined or ()
+    return [t for t in tokens if t not in LEGAL_STOPWORDS or t in keep]
 
 
 @dataclass
@@ -467,6 +482,10 @@ class Hit:
     ranking: float = 0.0
     # Share of the question's content terms that appear in this provision's HEADING.
     heading_coverage: float = 0.0
+    # How close together this provision says the question's words, 0 to 1. Reported
+    # because it reorders hits that cover the question equally, so a client that is
+    # shown an order can see what produced it.
+    tightness: float = 0.0
     # Terms that select a different provision and are absent from this one. A hit with
     # any of these is about a neighbouring offence, not this question.
     missing_qualifiers: list[str] = field(default_factory=list)
@@ -590,6 +609,22 @@ class BM25Index:
     # the question found in the heading, which both of the Article 2/7 headings score at
     # 1.00 and which therefore separates nothing.
     heading_weight: float = 1.5
+    # How much co-location of the question's words counts, within provisions that cover
+    # the question equally well. Swept over both question sets; see the module note on
+    # s.57 against s.302, where the answer is 215 tokens long and says the thing once
+    # in six and the wrong provision is 51 tokens with the same words twenty-one apart.
+    #
+    # Zero reproduces the previous ranking exactly, which is what makes the sweep
+    # meaningful rather than a comparison against a different tool.
+    # 0.5, from a sweep over the 105-question benchmark and the 101 generated
+    # questions. 0 is the previous ranking (56 right, 1 wrong); 0.25 to 0.75 all give
+    # 57 right and 0 wrong - the sweep's only plateau without a wrong answer, and it
+    # also fixes one the benchmark already had, 'consent of the heirs of the victim'
+    # citing s.55A instead of s.54. At 1.0 and above the signal starts overpowering
+    # coverage's intent: s.54 ("Commutation of sentence of death") is short and tight,
+    # so "what is the punishment for murder?" leaves s.302 for it, which is 2 wrong at
+    # 1.25 and 3 at 1.5. 0.5 is the middle of the plateau rather than an edge of it.
+    proximity_weight: float = 0.5
 
     documents: list[Provision] = field(default_factory=list)
     _tokens: list[list[str]] = field(default_factory=list)
@@ -619,6 +654,14 @@ class BM25Index:
     # statement about the statute book, delivered with a refusal's authority, which is
     # the defect class a wrong citation belongs to.
     _text_stems: set[str] = field(default_factory=set)
+    #: Words this corpus defines: the subject of every single-word heading. They
+    #: survive the stopword filter, in the query and in the index, because a
+    #: statute book's most ordinary words are also the subjects of its definitions.
+    _defined_terms: set[str] = field(default_factory=set)
+    #: token -> where it occurs in each provision's TEXT, in token order. The text
+    #: only: the heading and the boosted repeats are appended to `_tokens` for scoring
+    #: and have no position in the provision a reader sees.
+    _positions: list[dict[str, list[int]]] = field(default_factory=list)
 
     def fit(self, provisions: Sequence[Provision]) -> BM25Index:
         self.documents = list(provisions)
@@ -629,17 +672,35 @@ class BM25Index:
         self._heading_tokens = []
         self._form_cache = {}
         self._text_stems = set()
+        self._positions = []
+
+        # Which words this corpus DEFINES, before anything is tokenised for scoring.
+        # A provision whose whole heading is one word is a definition of that word -
+        # s.50 "Section", s.47 "Animal", s.52A "Harbour" - and that word has to survive
+        # the stopword filter or the provision defining it is unreachable. Single-word
+        # headings only: "Punishment of qatl-i-amd" would otherwise define "of".
+        self._defined_terms = {
+            heading[0]
+            for provision in self.documents
+            if len(heading := tokenise(provision.heading, keep_stopwords=True)) == 1
+        }
 
         for provision in self.documents:
             tokens = (
-                tokenise(provision.text)
-                + tokenise(provision.heading) * int(self.heading_boost)
+                tokenise(provision.text, defined=self._defined_terms)
+                + tokenise(provision.heading, defined=self._defined_terms) * int(self.heading_boost)
                 # The number is repeated so term frequency carries the boost, rather
                 # than bolting a separate score on afterwards.
                 + [provision.number.lower()] * int(self.number_boost)
             )
             self._tokens.append(tokens)
-            self._heading_tokens.append(set(tokenise(provision.heading)))
+            where: dict[str, list[int]] = {}
+            for position, token in enumerate(tokenise(provision.text, defined=self._defined_terms)):
+                where.setdefault(token, []).append(position)
+            self._positions.append(where)
+            self._heading_tokens.append(
+                set(tokenise(provision.heading, defined=self._defined_terms))
+            )
             # Stopwords kept here and nowhere else: this set answers "is the word in
             # the corpus at all", not "can it rank a provision".
             for word in tokenise(provision.text, keep_stopwords=True) + tokenise(
@@ -656,6 +717,55 @@ class BM25Index:
         lengths = [len(t) for t in self._tokens]
         self._average_length = sum(lengths) / len(lengths) if lengths else 0.0
         return self
+
+    def _tightness(self, index: int, terms: set[str]) -> float:
+        """How close together this provision says the question's words, 0 to 1.
+
+        1.0 is adjacent; it falls as the smallest window containing them grows. Terms
+        matched only in the heading have no position in the text and are left out of
+        the window, and the result is scaled by the share of matched terms that did
+        have one - so a provision that co-locates two of five words is not rewarded
+        like one that co-locates all five.
+
+        A question of one word carries no proximity information, so it scores 0 and
+        the factor built from it is 1: this must not become a length preference by
+        another route.
+        """
+        positions = self._positions[index]
+        found: list[list[int]] = []
+        for term in terms:
+            places = sorted(
+                place for form in self._forms(term) for place in positions.get(form, ())
+            )
+            if places:
+                found.append(places)
+        if len(found) < 2:
+            return 0.0
+
+        # Smallest window covering one occurrence of each term, by a linear sweep over
+        # the merged positions rather than the product of the lists.
+        merged = sorted((place, which) for which, places in enumerate(found) for place in places)
+        needed = len(found)
+        counts: dict[int, int] = {}
+        best = None
+        left = 0
+        for place, which in merged:
+            counts[which] = counts.get(which, 0) + 1
+            while len(counts) == needed:
+                best = (
+                    min(best, place - merged[left][0])
+                    if best is not None
+                    else (place - merged[left][0])
+                )
+                drop = merged[left][1]
+                counts[drop] -= 1
+                if not counts[drop]:
+                    del counts[drop]
+                left += 1
+        if best is None:
+            return 0.0
+        tightest = needed - 1  # the window when every term is adjacent
+        return (tightest / max(best, tightest)) * (len(found) / len(terms))
 
     def absent_terms(self, terms: Sequence[str]) -> list[str]:
         """Which of `terms` the corpus holds no word for, in any form.
@@ -714,7 +824,7 @@ class BM25Index:
         if not self.documents:
             return []
 
-        terms = tokenise(query)
+        terms = tokenise(query, defined=self._defined_terms)
         if not terms:
             return []
 
@@ -799,7 +909,13 @@ class BM25Index:
                         },
                         missing_qualifiers=sorted(set(missing) & QUALIFIERS),
                         unknown_terms=unknown,
-                        ranking=round(score * (1 + self.heading_weight * heading_coverage), 6),
+                        tightness=round(self._tightness(index, set(matched)), 4),
+                        ranking=round(
+                            score
+                            * (1 + self.heading_weight * heading_coverage)
+                            * (1 + self.proximity_weight * self._tightness(index, set(matched))),
+                            6,
+                        ),
                     )
                 )
 

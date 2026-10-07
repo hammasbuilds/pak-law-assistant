@@ -25,6 +25,7 @@ values so that a regression fails and an improvement does not have to edit them.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from pathlib import Path
 
 import pytest
@@ -139,8 +140,15 @@ def outcomes(assistant: LawAssistant) -> dict[str, list]:
 
 
 def test_the_corpus_is_the_real_statute_text():
+    """31 provisions, which was 26 until the importer stopped folding nine into one.
+
+    The Pakistan Code excerpt's CONTENTS stops at s.57 and its text runs to s.66, so
+    ss.58-66 were inside s.57's body. Five of the nine are provisions (60, 63, 64, 65,
+    66) and four are omitted or repealed in the source, so they are reported rather
+    than loaded - the same treatment as s.56, which the contents list as repealed.
+    """
     rows = _corpus_rows()
-    assert len(rows) == 26
+    assert len(rows) == 31
     assert sum(len(r["text"]) for r in rows) > 10_000
     # Both Acts, and the provisions a question below depends on.
     numbers = {(r["statute"], r["number"]) for r in rows}
@@ -520,23 +528,22 @@ def test_a_query_term_is_expanded_once_not_once_per_provision(monkeypatch):
     assert len(calls) < provisions, (len(calls), provisions)
 
 
-def test_a_provision_that_runs_on_into_others_says_so_in_the_answer(assistant):
-    """s.57 holds s.58 to s.66, because the contents stop before the text does.
+def test_the_provision_that_held_nine_others_is_one_provision_again(assistant):
+    """s.57 held ss.58-66, and the warning about it was the whole remedy.
 
-    The importer reports that when a corpus is built. Nothing reported it when one was
-    served - and query time is where it bites: nine headings' worth of words match
-    almost any question about punishment, and coverage is the first sort key, so the
-    malformed provision is the one most likely to be returned.
+    This test used to assert the warning. The importer parses the run now, so there is
+    nothing to warn about: s.57 answers the question s.57 answers, and the nine
+    sections that were inside it answer theirs. Both halves are asserted, because a
+    corpus that lost them would also produce no warning.
     """
     answer = assistant.answer(
         "how is imprisonment for life reckoned in fractions of punishment?",
         as_of="2026-01-01",
     )
     assert [p.citation for p in answer.passages][0] == "Section 57 PPC"
-    warned = [w for w in answer.warnings if "Section 57 PPC" in w]
-    assert len(warned) == 1, answer.warnings
-    for number in ("58", "66"):
-        assert number in warned[0]
+    assert [w for w in answer.warnings if "runs on into" in w] == [], answer.warnings
+    # Short again: its own sentence, not ten sections of the Code.
+    assert len(answer.passages[0].text) < 200, len(answer.passages[0].text)
 
 
 def test_a_well_formed_answer_carries_no_such_warning(assistant):
@@ -549,9 +556,12 @@ def test_a_well_formed_answer_carries_no_such_warning(assistant):
 
 def test_the_corpus_names_what_it_is_known_to_get_wrong(assistant):
     corpus = assistant.corpus
-    assert corpus.swallowed_headings() == {
-        "PPC:section:57": ["58", "59", "60", "61", "62", "63", "64", "65", "66"]
-    }
+    # Empty, and that is the finding: the detector's own rule - an ascending run of
+    # numbers each followed by a capitalised title - is what the importer now uses to
+    # continue a contents list that stopped, so the one case it had is parsed instead
+    # of reported. `tests/test_split_real.py` keeps the detector itself under test on a
+    # non-consecutive run, which is the shape the parser does not claim.
+    assert corpus.swallowed_headings() == {}
     # Cached like the index, and invalidated the same way.
     before = corpus.swallowed_headings()
     assert corpus.swallowed_headings() is before
@@ -606,36 +616,55 @@ def test_scoping_to_a_pakistani_act_still_works(assistant, question, citation):
 
 
 @pytest.mark.parametrize(
-    "question",
+    "question,expected",
     [
-        "what is the limit to imprisonment for non-payment of fine?",  # s.65
-        "what is the amount of a fine where no sum is expressed?",  # s.63
-        "can a court impose simple imprisonment?",  # s.60
+        ("what is the limit to imprisonment for non-payment of fine?", "Section 65 PPC"),
+        ("what is the amount of a fine where no sum is expressed?", "Section 63 PPC"),
     ],
 )
-def test_an_answer_from_inside_another_provision_is_not_cited(assistant, question):
-    """s.57 holds s.58 to s.66, so these were all answered "Section 57 PPC".
+def test_an_answer_from_inside_another_provision_is_cited_by_its_own_number(
+    assistant, question, expected
+):
+    """Three questions, three answers, and a citation history in between.
 
-    A warning was not enough. The reader acts on the citation, and a lawyer filing
-    "Section 57 PPC" for the fine-default rule has filed s.65. The provision is dropped
-    when its own text does not support the match, and kept - with a caveat - when it
-    does, so the question s.57 really answers is not lost with it.
+    All three were answered "Section 57 PPC", because s.57's body held ss.58-66 - and a
+    lawyer filing s.57 for the fine-default rule has filed s.65. The first remedy was a
+    warning, which leaves the reader acting on the wrong number. The second was a
+    refusal: `citation_unreliable`, dropping the hit when the provision's own text did
+    not support the match, which is honest and answers nothing.
+
+    The third is the one that works, and it is in the importer rather than in
+    retrieval: the sections exist, so they are cited.
     """
     answer = assistant.answer(question, as_of="2026-01-01")
-    assert answer.refused, [p.citation for p in answer.passages]
-    assert answer.refusal_status == "citation_unreliable"
-    assert any("wrong one" in w for w in answer.warnings), answer.warnings
+    assert not answer.refused, (answer.refusal_status, answer.refusal_reason)
+    assert answer.passages[0].citation == expected, [p.citation for p in answer.passages]
+    assert [w for w in answer.warnings if "wrong one" in w] == [], answer.warnings
 
 
-def test_the_provision_that_blob_really_is_still_answers(assistant):
-    """s.57's own first sentence is the answer to this, and dropping every malformed
-    provision outright would have lost it."""
-    answer = assistant.answer(
-        "how is imprisonment for life reckoned in fractions of punishment?", as_of="2026-01-01"
-    )
-    assert not answer.refused, answer.refusal_reason
-    assert answer.passages[0].citation == "Section 57 PPC"
-    assert any("runs on into" in w for w in answer.warnings)
+def test_the_third_of_those_three_is_a_tie_and_is_recorded_as_one(assistant):
+    """ "can a court impose simple imprisonment?" does not have one lexical answer.
+
+    s.60 is headed "Sentence may be (in certain cases of imprisonment) wholly or partly
+    rigorous or simple" and holds *simple*, *court* and *imprisonment*. s.66 reads "The
+    imprisonment which the Court imposes in default of payment of a fine may be of any
+    description", so it holds *court*, *imposes* and *imprisonment* within three words.
+    Both cover three of the question's four terms, and s.66 wins on proximity.
+
+    The word that makes the question specific is "simple", and nothing in a lexical
+    index knows that "impose" belongs to the asking frame while "simple" is the
+    subject - the repository has a list of the verbs of asking for exactly this reason,
+    and it governs refusals, not ranking. So this is written down as a limit rather
+    than pinned to whichever provision currently wins: both are returned, and s.60 is
+    one of them.
+    """
+    answer = assistant.answer("can a court impose simple imprisonment?", as_of="2026-01-01")
+    assert not answer.refused, (answer.refusal_status, answer.refusal_reason)
+    cited = [p.citation for p in answer.passages]
+    assert "Section 60 PPC" in cited, cited
+    assert cited[0] in ("Section 60 PPC", "Section 66 PPC"), cited
+    # And neither is s.57, which is what both of them used to be.
+    assert "Section 57 PPC" not in cited, cited
 
 
 # --- what a refusal says is true -------------------------------------------------------
@@ -703,7 +732,13 @@ FRESH: list[tuple[str, str]] = [
     ("consent of the heirs of the victim", "Section 54 PPC"),
     ("fourteen years instead of life", "Section 55 PPC"),
     ("arsh and daman", "Section 53 PPC"),
-    ("rigorous and simple imprisonment", "Section 53 PPC"),
+    # s.60, not s.53. This expected "Punishments" - which lists the two descriptions
+    # of imprisonment - because s.60 was not a provision when the question was
+    # written: it was inside s.57's body, with eight others. s.60 is headed
+    # "Sentence may be (in certain cases of imprisonment) wholly or partly rigorous
+    # or simple", which is what this phrase asks about. A corpus gaining the
+    # provision a question is about changes the right answer to it.
+    ("rigorous and simple imprisonment", "Section 60 PPC"),
     ("twenty-five years equivalent", "Section 57 PPC"),
     ("does the word animal cover a bird?", "Section 47 PPC"),
     ("anything made for conveyance on water", "Section 48 PPC"),
@@ -820,16 +855,23 @@ def test_the_readme_quotes_the_totals_these_sets_actually_produce(assistant):
     assert right + wrong + refused == total
 
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    # "against no wrong answer" rather than "against 0 wrong answers": the sentence is
+    # prose, and a count of zero is a word in English. Accepted here so the README does
+    # not have to read like a table to be checkable.
     stated = re.search(
-        r"that is (\d+)\s+refusals of (\d+) answerable questions against (\d+) wrong answer",
+        r"that is (\d+)\s+refusals of (\d+) answerable questions against (\d+|no) wrong answer",
         readme.replace("\n  ", " "),
     )
     assert stated, "the README no longer states the trade"
-    assert (int(stated.group(1)), int(stated.group(2)), int(stated.group(3))) == (
+    said_wrong = 0 if stated.group(3) == "no" else int(stated.group(3))
+    assert (int(stated.group(1)), int(stated.group(2)), said_wrong) == (
         refused,
         total,
         wrong,
     )
+    # And the word matches the number, in both directions: "no wrong answer" beside a
+    # non-zero count would read as the stronger claim.
+    assert (stated.group(3) == "no") == (wrong == 0), (stated.group(3), wrong)
 
     held = sum(
         1
@@ -972,18 +1014,51 @@ def test_the_readme_table_is_the_one_the_bench_prints():
 
 
 def test_every_question_in_every_set_is_in_the_printed_table():
-    """A table over a subset of the sets would read as a table over all of them."""
-    bench = _bench()
+    """A table over a subset of the sets would read as a table over all of them.
 
-    assert (
-        len(ANSWERABLE)
-        + len(PARAPHRASES)
-        + len(FRESH)
-        + len(UNANSWERABLE)
-        + len(MUST_REFUSE)
-        + len(FRESH_MUST_REFUSE)
-    ) == 97, "the sets no longer total the 97 the README states"
-    assert bench.main() == 0
+    Summed from the TABLE, against the sizes of the sets. That is the comparison the
+    name promises, and neither half of what was here did it:
+
+      * `len(...) + ... == 97, "the sets no longer total the 97 the README states"` -
+        a hand-kept total whose message named a figure the README does not state (it
+        says 105; 97 is the six sets without `IN_VOCABULARY_MUST_REFUSE`). The test
+        two above has a comment about exactly this shape;
+      * `assert bench.main() == 0`, where `main` returns a literal 0 on every path, so
+        it asserted that the command did not raise.
+    """
+    import io
+    import re
+    from contextlib import redirect_stdout
+
+    bench = _bench()
+    printed = io.StringIO()
+    with redirect_stdout(printed):
+        assert bench.main() == 0
+    rows = re.findall(r"^  \S.*?\s(\d+)\s+\d+\s+\d+\s+\d+$", printed.getvalue(), re.M)
+    assert rows, printed.getvalue()
+
+    sets = {
+        "in a person's words": ANSWERABLE,
+        "paraphrases": PARAPHRASES,
+        "written later again": FRESH,
+        "not in corpus (set 1)": UNANSWERABLE,
+        "not in corpus (set 2)": MUST_REFUSE,
+        "not in corpus (set 3)": FRESH_MUST_REFUSE,
+        "in corpus, unanswerable": IN_VOCABULARY_MUST_REFUSE,
+    }
+    assert len(rows) == len(sets), (rows, sorted(sets))
+    assert sum(int(n) for n in rows) == sum(len(q) for q in sets.values())
+
+    # And per row, so two sets swapping sizes cannot cancel out in the total.
+    text = printed.getvalue()
+    for name, questions in sets.items():
+        found = re.search(rf"^  {re.escape(name)}\s+(\d+)\s", text, re.M)
+        assert found, f"{name} is not a row of the table"
+        assert int(found.group(1)) == len(questions), (name, found.group(1), len(questions))
+
+    # The summary line counts the same questions the rows do.
+    total = re.search(r"(\d+) questions asked", text)
+    assert total and int(total.group(1)) == sum(len(q) for q in sets.values())
 
 
 # -- the README's table against what the command prints -----------------------------
@@ -1031,20 +1106,34 @@ def test_the_readme_table_is_the_one_this_prints():
     for i, (want, got) in enumerate(zip(quoted, actual, strict=False)):
         assert want == got, f"line {i}:\n  README: {want!r}\n  printed: {got!r}"
 
-    # What the block deliberately stops before: the explanation and the named wrong
-    # answer, which the README gives in prose instead. Named here so that if the
-    # command stops printing them, this test says so rather than passing on a prefix
-    # that has quietly become the whole output.
+    # What the block deliberately stops before: the explanation, which the README
+    # gives in prose instead. Named here so that if the command stops printing it,
+    # this test says so rather than passing on a prefix that has quietly become the
+    # whole output.
     tail = actual[len(quoted) :]
     assert tail, "the README block is now the whole output; the explanation is gone"
     # Joined, because the explanation is wrapped and a phrase spans two printed lines.
     joined = " ".join(line.strip() for line in tail)
     assert "only column that matters" in joined, tail
-    assert "WRONG ANSWERS" in joined, tail
-    assert "Section 55A PPC" in joined, tail
 
-    # And the prose does name it, which is the part a reader relies on.
-    assert "s.55A rather than s.54" in readme
+    # The wrong-answer listing, printed when there is one and not when there is not.
+    #
+    # This used to assert "WRONG ANSWERS" and "Section 55A PPC" unconditionally, which
+    # was a test pinned to the existence of a wrong answer: the column is 0 now, and
+    # those two assertions failed on the improvement. What the command promises is that
+    # a non-zero column is itemised, so that is what is checked - in both directions,
+    # because a listing printed over an empty set would be as wrong as a missing one.
+    total = next(line for line in actual if "questions asked" in line)
+    stated_wrong = int(re.search(r"(\d+) wrong", total).group(1))
+    if stated_wrong:
+        assert "WRONG ANSWERS" in joined, tail
+        listed = joined.count("expected ")
+        assert listed == stated_wrong, (listed, stated_wrong, tail)
+    else:
+        assert "WRONG ANSWERS" not in joined, tail
+        # And the README explains what made it zero rather than leaving a bare claim.
+        assert "term proximity" in readme, "nothing in the README accounts for 0 wrong"
+        assert "s.55A rather than s.54" in readme, "the fixed case is no longer named"
 
 
 # -- the hard refusals: every word present, no provision answering -------------------
@@ -1068,14 +1157,89 @@ def test_a_question_the_corpus_cannot_answer_in_its_own_words_is_refused(assista
     )
 
 
-def test_the_hard_refusals_reach_more_than_one_condition():
+def test_the_hard_refusals_reach_more_than_one_condition(assistant):
     """A set that trips one gate eight times measures that gate, not the refusals.
 
-    Counted here rather than assumed, because that is precisely what was wrong with
-    the 26: the review's measurement of them was "all 26 -> subject_not_in_corpus".
+    Counted by ASKING, which is the whole point and is not what this did. It read
+    `Counter(IN_VOCABULARY_MUST_REFUSE.values())` - the expected statuses, from a dict
+    literal in this file - and asserted that the literal held at least three distinct
+    values. Both operands came from the fixture, no code under test ran, and the
+    docstring above said "Counted here rather than assumed, because that is precisely
+    what was wrong with the 26". It counted the assumption.
+
+    The 26 were all `subject_not_in_corpus`: one gate, measured twenty-six times and
+    reported as twenty-six refusals. These eight are built from the corpus's own words
+    so they cannot be turned away by vocabulary, and what they reach is a fact about
+    the code.
     """
     from collections import Counter
 
-    reached = Counter(IN_VOCABULARY_MUST_REFUSE.values())
+    reached = Counter(
+        assistant.answer(question, as_of="2026-01-01").refusal_status
+        for question in sorted(IN_VOCABULARY_MUST_REFUSE)
+    )
+    assert "" not in reached, (
+        "a question in this set was answered rather than refused; "
+        "the per-question test above names which"
+    )
     assert len(reached) >= 3, reached
     assert max(reached.values()) <= len(IN_VOCABULARY_MUST_REFUSE) - 3, reached
+
+    # Measured: 4 subject_not_in_corpus, 2 weak_match, 2 different_offence. Four of
+    # the eight DO reach the vocabulary gate, which is worth stating because the set
+    # is named for being in vocabulary: what is in the corpus is each question's
+    # SUBJECT - qatl-i-amd, pardon, the Constitution - while a word it turns on is
+    # not, "remit" and "payable" and "prescribe" among them. That is the gate doing
+    # its job on a question whose subject the corpus holds, which the other 26 cannot
+    # demonstrate, and it is three gates between eight questions either way.
+    assert reached == Counter({"subject_not_in_corpus": 4, "weak_match": 2, "different_offence": 2})
+
+
+# -- the score refusal, which prints the number it decided on -------------------------
+
+
+def test_a_weak_score_refusal_prints_two_numbers_that_differ():
+    """It printed "(best score 1.00 below 1.00)".
+
+    The comparison is `score < min_score` on unrounded floats and the message formatted
+    them with `:.2f`, so a near miss - 1.0009 against 1.0010 - came out as two identical
+    numbers and the word "below". A reader cannot tell that from a broken comparison,
+    and the whole purpose of printing the figure is to show how close it was.
+
+    Driven with a raised threshold rather than hunted for in the corpus: this branch
+    needs a question that matches something and not enough of it, which the fixture
+    corpus does not naturally produce, and no test had ever reached it.
+    """
+    assistant = LawAssistant(
+        corpus=build_checked(_corpus_rows(), source="fixtures"),
+        min_score=50.0,
+    )
+    answer = assistant.answer("what is the punishment for murder?", as_of="2026-01-01")
+    assert answer.refused
+    assert answer.refusal_status == "weak_match", answer.refusal_status
+
+    import re
+
+    figures = re.search(r"best score ([\d.]+) below ([\d.]+)", answer.refusal_reason)
+    assert figures, answer.refusal_reason
+    best, threshold = float(figures.group(1)), float(figures.group(2))
+    assert best < threshold, answer.refusal_reason
+    # And the printed forms differ, which is the actual defect: two equal-looking
+    # numbers either side of "below".
+    assert figures.group(1) != figures.group(2), answer.refusal_reason
+
+
+def test_the_score_refusal_shows_a_near_miss_as_a_near_miss():
+    """The case that produced the complaint, at the precision that shows it."""
+    assistant = LawAssistant(
+        corpus=build_checked(_corpus_rows(), source="fixtures"),
+        min_score=50.0,
+    )
+    answer = assistant.answer("what is the punishment for murder?", as_of="2026-01-01")
+    import re
+
+    figures = re.search(r"best score ([\d.]+) below ([\d.]+)", answer.refusal_reason)
+    assert figures
+    # Three decimals, so a gap of a thousandth is visible rather than rounded away.
+    assert len(figures.group(1).split(".")[1]) >= 3, figures.group(1)
+    assert len(figures.group(2).split(".")[1]) >= 3, figures.group(2)

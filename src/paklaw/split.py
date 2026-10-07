@@ -391,6 +391,45 @@ def provision_spans(text: str, *, include_repealed: bool = False) -> list[tuple[
     return kept
 
 
+#: How many consecutive unlisted headings it takes to believe the contents simply
+#: stopped. One is a cross-reference - a statute says "specified in Section 304"
+#: constantly - and two could be a coincidence of two references in order. Three
+#: consecutive numbers, each followed by its own capitalised title, after the last
+#: number the contents DID list, is a page-range excerpt of a code.
+MIN_TAIL_RUN = 3
+
+
+def _tail_run(chain: list[_Candidate], weak: list[_Candidate]) -> list[_Candidate]:
+    """The unlisted headings that continue the contents, in order.
+
+    Only after the chain's last accepted provision, and only while each number is the
+    next one: 57 is the last listed, so 58, 59, 60 ... 66 are accepted and a jump to
+    80 ends the run. The same shape `buried_numbers` uses to REPORT them, used to parse
+    them - the detector and the parser disagreeing is what left nine sections inside a
+    tenth with a warning attached.
+    """
+    if not chain or not weak:
+        return []
+    last = chain[-1]
+    try:
+        number = int("".join(c for c in last.number if c.isdigit()) or 0)
+    except ValueError:
+        return []
+
+    after = sorted(
+        (c for c in weak if c.start > last.start and c.heading),
+        key=lambda c: c.start,
+    )
+    run: list[_Candidate] = []
+    for candidate in after:
+        digits = "".join(c for c in candidate.number if c.isdigit())
+        if not digits or int(digits) != number + 1:
+            continue
+        run.append(candidate)
+        number = int(digits)
+    return run if len(run) >= MIN_TAIL_RUN else []
+
+
 def _layout(text: str) -> _Layout:
     toc, toc_order, toc_start, toc_end = _contents(text)
     toc_rank = {number: i for i, number in enumerate(toc_order)}
@@ -407,6 +446,10 @@ def _layout(text: str) -> _Layout:
 
     candidates: list[_Candidate] = []
     unlisted: list[str] = []
+    # Candidates the contents do not list and whose heading is not emphatic enough to
+    # stand alone. Kept instead of dropped, because a consecutive run of them after the
+    # last listed number is a contents list that stopped, not a body full of citations.
+    weak: list[_Candidate] = []
     for match in _CANDIDATE.finditer(text, toc_end):
         raw_number = _number(match.group("number"))
         rest = match.group("rest")
@@ -443,11 +486,30 @@ def _layout(text: str) -> _Layout:
                 weight = 1.0  # a clear heading the contents do not list
                 unlisted.append(number)
             else:
+                # Not dropped yet. `_tail_run` below asks whether this is part of an
+                # ascending run continuing the contents, which is what a page-range
+                # excerpt of a code looks like: PPC pp.39-41 lists to s.57 and its text
+                # runs to s.66, and all nine were discarded here and folded into s.57.
+                weak.append(
+                    _Candidate(
+                        match.start(),
+                        body_start,
+                        number,
+                        heading,
+                        1.0,
+                        order_of(number) if toc else provision_order(number),
+                    )
+                )
                 continue
         order = order_of(number) if toc else provision_order(number)
         candidates.append(_Candidate(match.start(), body_start, number, heading, weight, order))
 
     chain = [candidates[i] for i in _heaviest_rising_chain(candidates)]
+    tail = _tail_run(chain, weak)
+    if tail:
+        candidates = candidates + tail
+        chain = chain + tail
+        unlisted.extend(c.number for c in tail)
     return _Layout(toc, toc_order, toc_start, toc_end, candidates, chain, unlisted)
 
 

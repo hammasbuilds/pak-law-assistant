@@ -751,10 +751,19 @@ def load_corpus(path: str | None) -> tuple[Corpus, str]:
 
 
 def _echo(question: str) -> str:
-    """The question, shortened if it is long. The caller already has the whole of it."""
-    if len(question) <= ECHO_LIMIT:
-        return question
-    return f"{question[:ECHO_LIMIT]}... [{len(question):,} characters; echo shortened]"
+    """The question, shortened if long and with lone surrogates replaced.
+
+    The scrub is not cosmetic. A lone surrogate is valid JSON, so `"murder \\ud800"`
+    arrived intact, was echoed into the result, and then could not be encoded as UTF-8
+    on the way out - `UnicodeEncodeError` from the writer, uncaught, process exit 1.
+    One request with half a character in it ended the session for every request after
+    it. Replaced rather than refused, because the request is well formed by every rule
+    the protocol has and the question is still what the caller asked.
+    """
+    scrubbed = _LONE_SURROGATE.sub("\ufffd", question)
+    if len(scrubbed) <= ECHO_LIMIT:
+        return scrubbed
+    return f"{scrubbed[:ECHO_LIMIT]}... [{len(scrubbed):,} characters; echo shortened]"
 
 
 def _string(arguments: dict, name: str, *, required: bool = False) -> str | None:
@@ -1084,9 +1093,23 @@ class LawServer:
 
     def _initialize(self, params: dict) -> dict:
         requested = params.get("protocolVersion")
-        self.protocol_version = (
-            requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
-        )
+        agreed = requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
+        if self.protocol_version is not None and agreed != self.protocol_version:
+            # Initialise happens once per session. A second one used to be accepted and
+            # to reset the version - so a client that re-sent `initialize` with a
+            # version this server does not know had its session silently moved to the
+            # newest one, which changes whether later results carry
+            # `structuredContent`. The results change shape and nothing says why.
+            #
+            # Re-sending the SAME version is allowed: that is a retry of a message the
+            # client is not sure arrived, and answering it identically strands nobody.
+            raise ProtocolError(
+                INVALID_REQUEST,
+                f"already initialized at protocol {self.protocol_version}; a session is "
+                "initialized once, and this request would have changed the shape of "
+                "every later result",
+            )
+        self.protocol_version = agreed
         return {
             "protocolVersion": self.protocol_version,
             "capabilities": {"tools": {"listChanged": False}},
@@ -1229,16 +1252,53 @@ def _error(request_id: Any, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
+#: Text that is valid JSON and cannot be encoded as UTF-8. A lone surrogate is half of
+#: a surrogate pair, which is what a client truncating a UTF-16 buffer emits, and
+#: `json.loads` accepts it.
+_LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
+
+
+def _message_id(message: Any) -> Any:
+    """The id to answer with when a reply cannot be written, or None if there is none."""
+    if isinstance(message, dict):
+        found = message.get("id")
+        if isinstance(found, (str, int, type(None))) and not isinstance(found, bool):
+            return found
+    return None
+
+
+def _encode(reply: Any, message_id: Any = None) -> bytes:
+    """One reply as a line of bytes, or an error object if it cannot be encoded.
+
+    `_echo` keeps lone surrogates out of what the server reflects; this is the backstop
+    for anything else that reaches here, because a reply that cannot be serialised used
+    to end the process - the one outcome worse than any error object, since the client
+    is left waiting on a request that WAS answered and on every request after it.
+    """
+    try:
+        return json.dumps(reply, ensure_ascii=False, allow_nan=False).encode() + b"\n"
+    except (UnicodeEncodeError, ValueError, TypeError) as exc:
+        fallback = _error(message_id, INTERNAL_ERROR, f"result could not be encoded: {exc}")
+        return json.dumps(fallback, ensure_ascii=True).encode() + b"\n"
+
+
 def serve(server: LawServer, stdin: BinaryIO, stdout: BinaryIO) -> None:
     """Read newline-delimited JSON-RPC until stdin closes."""
     for raw in stdin:
         line = raw.strip()
         if not line:
             continue
+        message: Any = None
         try:
             message = json.loads(line)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            reply: Any = _error(None, PARSE_ERROR, f"parse error: {exc}")
+        # `Exception`, not `(JSONDecodeError, UnicodeDecodeError)`. Those are the two
+        # ways a line is *invalid*; they are not the two ways parsing one can fail. A
+        # line of 20,000 nested `[` raises `RecursionError` from inside `json.loads`,
+        # which propagated out of this loop and exited the process - so the client got
+        # no reply to that line and none to anything after it, against a README
+        # sentence promising that a malformed line does not end the session.
+        except Exception as exc:  # noqa: BLE001 - a hostile line may break a parser
+            reply: Any = _error(None, PARSE_ERROR, f"parse error: {type(exc).__name__}: {exc}")
         else:
             if isinstance(message, list):
                 # Batches exist in 2025-03-26 and were dropped after; answering one costs
@@ -1251,7 +1311,7 @@ def serve(server: LawServer, stdin: BinaryIO, stdout: BinaryIO) -> None:
                 reply = server.handle(message)
 
         if reply is not None:
-            stdout.write(json.dumps(reply, ensure_ascii=False, allow_nan=False).encode() + b"\n")
+            stdout.write(_encode(reply, _message_id(message)))
             stdout.flush()
 
 

@@ -121,10 +121,6 @@ class Provision:
     def key(self) -> str:
         return f"{self.statute}:{self.unit}:{self.number}"
 
-    @property
-    def version_key(self) -> str:
-        return f"{self.key}@{self.in_force_from.isoformat()}"
-
     def in_force_on(self, date: dt.date) -> bool:
         if date < self.in_force_from:
             return False
@@ -142,10 +138,6 @@ class Provision:
             provision=self.number,
             raw=self.key,
         )
-
-    @property
-    def text_held(self) -> bool:
-        return bool(self.text.strip())
 
     def status_note(self, as_of: dt.date) -> str:
         """What a reader must be told about this text before relying on it."""

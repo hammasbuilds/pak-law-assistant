@@ -446,7 +446,7 @@ CI badge are the record. What the suite covers:
 | the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included. Also the handshake: `structuredContent` and `outputSchema` arrived in protocol 2025-06-18, so a call before `initialize` used to be answered in the degraded 2024 shape rather than refused - a client that skipped the handshake got a worse answer and no way to tell why. It is now a -32002, and the test that found it compares the two shapes |
 | corpus building | the importer against real statute layouts from two public sources |
 | record coverage | what the corpus does and does not claim to know |
-| retrieval quality | **three question sets over 26 real provisions, written at three different times**, 26 subjects the corpus does not hold, and 8 questions built from the corpus's own words that it still cannot answer. `python tests/bench.py` prints the table (below), so the figures here have a producer rather than being asserted as floors in a test and written out by hand. The later sets exist because a benchmark of 17 sentences is a claim about 17 sentences: an independent review re-asked the same corpus in its own words and got 8 confident wrong answers. The fourth refusal set exists because the other three all name a subject the corpus has never seen, so every one of them is turned away by the vocabulary check alone - one gate measured 26 times, and not the hard one |
+| retrieval quality | **three question sets over 31 real provisions, written at three different times**, 26 subjects the corpus does not hold, and 8 questions built from the corpus's own words that it still cannot answer. `python tests/bench.py` prints the table (below), so the figures here have a producer rather than being asserted as floors in a test and written out by hand. The later sets exist because a benchmark of 17 sentences is a claim about 17 sentences: an independent review re-asked the same corpus in its own words and got 8 confident wrong answers. The fourth refusal set exists because the other three all name a subject the corpus has never seen, so every one of them is turned away by the vocabulary check alone - one gate measured 26 times, and not the hard one |
 | regressions | one per defect an independent review reproduced, each pinned so it cannot come back quietly |
 
 ### Retrieval quality
@@ -460,21 +460,35 @@ RETRIEVAL QUALITY
   ----------------------------------------------------------------
   in a person's words                  17      16      0        1
   paraphrases                          34      26      0        8
-  written later again                  20      14      1        5
+  written later again                  20      15      0        5
   ----------------------------------------------------------------
   not in corpus (set 1)                 6       0      0        6
   not in corpus (set 2)                10       0      0       10
   not in corpus (set 3)                10       0      0       10
   in corpus, unanswerable               8       0      0        8
   ----------------------------------------------------------------
-  105 questions asked: 56 answered correctly, 1 wrong, 34 of 34 correctly refused
+  105 questions asked: 57 answered correctly, 0 wrong, 34 of 34 correctly refused
 ```
 
 `wrong` is the only column that matters. A refusal costs a reader a lookup; a confident
-citation of the wrong provision costs them the argument. The one wrong answer is
-`"consent of the heirs of the victim"` returning s.55A rather than s.54 - that phrase is
-verbatim in the provisos of s.54 and s.55 and in the body of s.55A, so the bare fragment
-does not determine which, and the expectation was more specific than the question.
+citation of the wrong provision costs them the argument.
+
+The column was 1 until the ranking learned about **term proximity**: how close together
+a provision says the words of the question, used to separate provisions that cover it
+equally well. Two questions about s.57 PPC - "imprisonment for life shall be reckoned as
+equivalent to imprisonment for twenty-five years" - were answered with s.302, the
+death-penalty provision, because a 51-token provision about punishment for murder
+happens to contain *imprisonment*, *life*, *twenty*, *five* and *years* in different
+clauses, so coverage tied at 1.00 and BM25 then preferred s.302 for being shorter. The
+smallest window containing all five words is **6 tokens in s.57 and 21 in s.302**: the
+provision that states the proposition says it in one clause, and the one that does not
+scatters it. The weight was swept over these 105 questions - 0 reproduces the old
+ranking at 56 right and 1 wrong, 0.25 to 0.75 all give 57 and 0, and 1.0 upward starts
+overriding coverage's intent - so it is 0.5, the middle of the plateau.
+
+It also fixed the one the table already had: `"consent of the heirs of the victim"`
+returned s.55A rather than s.54, because that phrase is verbatim in the provisos of s.54
+and s.55 and in the body of s.55A.
 
 The refusal population was written here as **20** until this command printed it: it is 26
 across the three sets, and the figure had been copied from one set's size rather than
@@ -514,11 +528,23 @@ Run them with
   denotes…") answers it; and a word the corpus has never seen refuses the whole question,
   so "does the word animal cover a bird?" is refused because the corpus contains no
   *bird*, not because it contains no *animal*. Across the three question sets that is 14
-  refusals of 71 answerable questions against 1 wrong answer — one in five questions
-  refused that a reader would have answered, to make a wrong citation rare. An
-  independent review removed the rule and measured the other side: three confident wrong
-  citations appeared, two of them s.302, "punished with death as qisas", for offences the
-  corpus does not hold. That is the trade, and this repository chooses this side of it.
+  refusals of 71 answerable questions against no wrong answer — one in five questions
+  refused that a reader would have answered, to make a wrong citation rare.
+  `python tests/bench.py --ablate` removes the rule and prints both sides:
+
+  ```
+                            right  wrong  refused  answered anyway
+    as shipped                 57      0       14                0
+    rule removed               59      0       12                6
+  ```
+
+  Two more questions answered, and six questions answered that name a subject the
+  corpus does not hold — three of them with s.302, "punished with death as qisas", for
+  offences such as dacoity with murder and culpable homicide not amounting to murder.
+  That is the trade, and this repository chooses this side of it. This paragraph used to
+  quote "three confident wrong citations, two of them s.302" from a review, with nothing
+  in the repository producing the figure; a second reviewer reproduced the experiment and
+  got six and four. The command is here so the number is not a recollection.
 - Sections are the unit. A subsection citation returns its whole section, and an amended
   subsection has to be recorded as a new text of the whole section.
 - Urdu support is tokenisation-level. Full bilingual retrieval needs the Urdu
@@ -642,6 +668,45 @@ the Amendment Act, 2020.]` has no heading dash, so it wasn't a heading. That als
 it wasn't a boundary, and section 3's text ended with it. *Fixed* by treating
 omitted/repealed markers as boundaries in their own right and reporting them for dates
 to be recorded by hand.
+
+**And it swallowed nine sections where the contents list stopped.** The Pakistan Code
+excerpt in the fixtures is three pages: its CONTENTS ends at s.57 and its text runs on
+to s.66, so ss.58-66 were folded into s.57's body. That was detected and reported -
+`swallowed_headings`, and a warning on every answer citing s.57 - and reporting it was
+the whole remedy for two rounds. It cost a citation: s.57 became 1,800 characters
+holding ten provisions, BM25 penalises length, and *"is imprisonment for life
+twenty-five years?"* - which s.57 answers in its own first sentence - was answered with
+**s.302, the death-penalty provision**, whose 51 characters happen to contain the same
+five words in different clauses. *Fixed* in the importer, with the detector's own rule:
+an ascending run of numbers each followed by a capitalised title, starting at the number
+after the last one the contents list, is a contents list that stopped. Three in a row is
+the minimum, because a statute cites earlier sections constantly and one or two
+ascending references are a coincidence. The corpus is 31 provisions now rather than 26;
+ss.58, 59, 61 and 62 are omitted or repealed in the source and are reported rather than
+loaded, exactly as a listed `[Repealed]` is.
+
+**Three well-formed lines ended the session.** The README said a malformed line does
+not, and the test of that name sends syntactically bad JSON - the one case that was
+handled. A lone surrogate (`"\ud800"`, valid JSON, and what a client truncating a UTF-16
+buffer emits) was echoed into `answer_question`'s result and could not be encoded as
+UTF-8, so the process exited 1 with the request unanswered and every later request
+unanswered too. A line of 20,000 nested `[` raised `RecursionError` out of `json.loads`,
+which the `except` clause did not list. And a second `initialize` carrying an unknown
+version was accepted and reset the protocol version, which decides whether a result
+carries `structuredContent` - a client's results changing shape mid-session because of a
+message that should have been refused. *Fixed* at three layers: the echo scrubs lone
+surrogates, the parse `except` catches `Exception`, the writer falls back to an error
+object on the right id, and a re-`initialize` at a different version is `-32600` while a
+retry at the same version is answered.
+
+**Two thirds of the suite disappeared on a normal install, and the run said "2 skipped".**
+`pytest.importorskip("jsonschema")` sat at module level, 950 lines into
+`tests/test_mcp_server.py`; a module-level importorskip raises during *collection*, so
+the whole file was dropped - and `tests/test_user_review.py` imports its helpers, so
+that went too. CI installs the dev group, so CI never saw it. *Fixed* by making the
+validator a fixture, so without it the only skips are the two parametrised tests that
+need a validator and the count says so, and
+`tests/test_suite_integrity.py` forbids a module-level skip in any test file.
 
 **`amended_by` was being read in two directions.** The library means the instrument that
 *ended* a version. The first `changes_between` read it as what *began* one, so it reported
