@@ -39,9 +39,24 @@
   row limits are not redundant: "all of this was replaced by all of that" is a single
   row holding both texts, and one such row measured 4.38 MB.
 
-  Measured end to end, from about 90 bytes of arguments: a 34,000-character provision
-  held this single-threaded server for 56 seconds and a 1.4-million-character one
-  produced a 5.8 MB reply. Both are now hundredths of a second and a few kilobytes.
+  Measured end to end through `compare_versions`, from about 90 bytes of arguments. The
+  reviewer who found this carried the curve further than the first fix accounted for:
+
+  | provision text | before | after |
+  |---:|---:|---:|
+  | 34,000 chars | 56.8s | 0.008s |
+  | 170,000 chars | **8,043s** (2h 14m) | 0.032s |
+  | 1,460,000 chars | 5.8 MB reply | 150 KB reply, 0.18s |
+
+  170,000 characters is *under* `TEXT_LIMIT`, which is the point: that limit applies to
+  arguments, and a provision's length is a property of the statute book.
+
+  The work bound alone did not fix the reply, because most of that reply was never the
+  diff — `compare_versions` returns the provision as it stood on each date, so two
+  texts, and `provision_history --with_text` is not paged and returns one per version.
+  Each provision text in a result is abridged at **60,000 characters**, which is longer
+  than the longest sections in a tax, companies or procedure ordinance, so nothing real
+  is cut; above it the text states its own length and where to read the rest.
 
   Every bound reports itself in the result rather than truncating silently, and none of
   them declines to compare: a coarse answer about what changed is a true statement about

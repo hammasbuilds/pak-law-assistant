@@ -55,6 +55,7 @@ from .answer import Answer, LawAssistant
 from .audit import (
     ALL_CHANGE_KINDS,
     ALL_STATUSES,
+    abridge_text,
     changes_between,
     check_citations,
     compare_versions,
@@ -932,7 +933,7 @@ class LawServer:
                 {
                     "citation": p.citation,
                     "heading": p.heading,
-                    "text": p.text,
+                    "text": abridge_text(p.text),
                     "statute": p.statute,
                     "in_force_from": p.in_force_from,
                     "in_force_to": p.in_force_to,
@@ -987,7 +988,9 @@ class LawServer:
             for entry, version in zip(
                 result["history"], self.corpus.versions(resolved), strict=True
             ):
-                entry["text"] = version.text
+                # Abridged per version: this is not paged, so the reply is the
+                # number of versions times the size of the provision.
+                entry["text"] = abridge_text(version.text)
         return self._with_corpus_note(result)
 
     def compare_versions(self, arguments: dict) -> dict:

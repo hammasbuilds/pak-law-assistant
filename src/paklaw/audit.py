@@ -488,6 +488,33 @@ def _word_level(before: str, after: str, budget: _Work) -> list[dict]:
     return changes
 
 
+#: The most characters of ONE provision's text a result carries. A reply is a protocol
+#: message, and nothing capped what the corpus contributes to one: `TEXT_LIMIT` caps
+#: arguments, and a provision's length is a property of the statute book.
+#:
+#: Measured, through `compare_versions`, which returns two texts: a 1,460,000-character
+#: provision produced a 2,934,297-byte reply, of which 2,904,216 bytes were the two
+#: texts. `provision_history --with_text` is worse and was not the one measured - it is
+#: not paged, and attaches the full text of every version.
+#:
+#: 60,000 rather than something tidier because the point is not to abridge anything
+#: real: the longest sections in a tax, companies or procedure ordinance run past 50,000
+#: characters, and a bound that cuts those is a bound that loses law. Above this the
+#: text says its own length and where to read the rest.
+MAX_RESULT_TEXT = 60_000
+
+
+def abridge_text(text: str) -> str:
+    """One provision's text, cut to `MAX_RESULT_TEXT` and saying so if it was cut."""
+    if len(text) <= MAX_RESULT_TEXT:
+        return text
+    return (
+        text[:MAX_RESULT_TEXT].rstrip()
+        + f" ... [abridged: this provision is {len(text):,} characters. Read it in "
+        "pages with `search_text`, or narrow the citation to a subdivision.]"
+    )
+
+
 def compare_versions(
     corpus: Corpus, key: str, *, before: str | dt.date, after: str | dt.date
 ) -> dict:
@@ -518,7 +545,7 @@ def compare_versions(
             "in_force": True,
             "in_force_from": version.in_force_from.isoformat(),
             "in_force_to": version.in_force_to.isoformat() if version.in_force_to else None,
-            "text": version.text,
+            "text": abridge_text(version.text),
         }
 
     result = {"citation": citation, "before": describe(v1, d1), "after": describe(v2, d2)}

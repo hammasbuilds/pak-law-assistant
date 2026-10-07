@@ -341,3 +341,122 @@ def test_security_md_describes_the_bounds_that_exist():
     assert "alternating" in text
     # And no claim that anything is left uncompared.
     assert "not compared" not in text
+
+
+# -- the other half of the reply, which the bound above does not touch ----------------
+#
+# A reviewer measured `compare_versions` on the unbounded code: 170,000 characters of
+# provision text held the single-threaded server for 8,043 seconds (2h 14m) from about
+# 90 bytes of arguments, and 1,460,000 characters produced a 5.8 MB reply. The budget
+# above fixed the time - the same 170,000 characters is now 0.03s - and the `changes`
+# array is ~30 KB whatever the input size.
+#
+# It did not fix the reply, because most of that reply was never the diff. The tool
+# returns the provision as it stood on each date, so two texts; `provision_history
+# --with_text` is not paged and returns one per VERSION. 2.9 MB of the 2.93 MB was
+# those texts. Bounding one component of a reply and calling the reply bounded is the
+# same error as bounding one passage and calling the work bounded.
+
+
+def _two_version_corpus(characters: int):
+    import datetime as dt
+
+    from paklaw.corpus import Corpus, Provision
+
+    sentence = (
+        "Whoever commits an offence punishable under this section shall be punished "
+        "with imprisonment of either description for a term which may extend to seven "
+        "years or with fine or with both. "
+    )
+    before = (sentence * (characters // len(sentence) + 1))[:characters]
+    after = before.replace("seven years", "ten years")
+
+    def version(text: str, start, end=None):
+        return Provision(
+            statute="PPC",
+            unit="section",
+            number="302",
+            heading="A long section",
+            text=text,
+            in_force_from=start,
+            in_force_to=end,
+        )
+
+    return Corpus(
+        provisions=[
+            version(before, dt.date(2010, 1, 1), dt.date(2019, 12, 31)),
+            version(after, dt.date(2020, 1, 1)),
+        ],
+        as_at=dt.date(2026, 1, 1),
+    )
+
+
+@pytest.mark.parametrize("characters", [170_000, 1_460_000])
+def test_one_compare_call_is_neither_slow_nor_megabytes(characters: int):
+    """The reviewer's two worst rows, through the tool rather than through `word_diff`.
+
+    170,000 characters is still UNDER the server's own 200,000-character `TEXT_LIMIT`,
+    which is the point of that finding: the limit applies to arguments and a provision's
+    length is a property of the statute book.
+    """
+    from paklaw.audit import MAX_RESULT_TEXT, compare_versions
+
+    corpus = _two_version_corpus(characters)
+    started = time.monotonic()
+    result = compare_versions(
+        corpus, "PPC:section:302", before="2015-01-01", after="2021-01-01"
+    )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < BUDGET_SECONDS, (characters, elapsed)
+    payload = len(json.dumps(result))
+    assert payload < 4 * MAX_RESULT_TEXT, (characters, payload)
+    assert result["changes"], "bounded into saying nothing"
+    assert any(r["change"] in ("added", "removed", "replaced") for r in result["changes"])
+
+
+def test_a_long_real_section_is_returned_whole():
+    """The bound must not cut law. The longest sections in a tax, companies or
+    procedure ordinance run past 50,000 characters, so those come back entire."""
+    from paklaw.audit import MAX_RESULT_TEXT, compare_versions
+
+    assert MAX_RESULT_TEXT > 50_000, MAX_RESULT_TEXT
+    result = compare_versions(
+        _two_version_corpus(50_000),
+        "PPC:section:302",
+        before="2015-01-01",
+        after="2021-01-01",
+    )
+    for side in ("before", "after"):
+        assert "abridged" not in result[side]["text"], side
+        # Not exactly 50,000 on the `after` side: the amendment substitutes a shorter
+        # phrase, which is what an amendment does.
+        assert 48_000 < len(result[side]["text"]) <= 50_000, (
+            side,
+            len(result[side]["text"]),
+        )
+
+
+def test_an_abridged_text_says_its_real_length_and_where_to_read_it():
+    from paklaw.audit import compare_versions
+
+    result = compare_versions(
+        _two_version_corpus(1_460_000),
+        "PPC:section:302",
+        before="2015-01-01",
+        after="2021-01-01",
+    )
+    text = result["before"]["text"]
+    assert "abridged" in text
+    assert f"{1_460_000:,}" in text, text[-200:]
+    assert "search_text" in text
+
+
+def test_provision_history_with_text_is_bounded_per_version():
+    """The site that was never measured and is the worst of the three: not paged, and
+    one full provision text per version."""
+    from paklaw.audit import MAX_RESULT_TEXT, abridge_text
+
+    corpus = _two_version_corpus(1_460_000)
+    for provision in corpus.provisions:
+        assert len(abridge_text(provision.text)) < MAX_RESULT_TEXT + 500
