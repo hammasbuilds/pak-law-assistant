@@ -201,3 +201,44 @@ def test_a_commutation_order_is_not_reported_as_an_unheld_act(assistant):
     assert answer.refused, [p.citation for p in answer.passages]
     assert answer.refusal_reason, "there is no reason to check"
     assert "Commutation Order" not in answer.refusal_reason, answer.refusal_reason
+
+
+def test_the_vocabulary_the_guard_reads_follows_an_amendment():
+    """The guard asks whether the corpus writes a jurisdiction word in front of a noun,
+    and the answer changes when the corpus does.
+
+    `Corpus` rebuilds its index and its swallowed-heading map whenever
+    `len(provisions)` changes, because appending to `provisions` is what an amendment
+    does. This cache was keyed on `is None`, so an amendment left the guard reading the
+    corpus's vocabulary as it stood before it - and the set it replaced had the same
+    defect, which is why it is tested rather than assumed.
+    """
+    import datetime as dt
+
+    from paklaw.corpus import Corpus, Provision
+
+    def provision(number: str, heading: str, text: str) -> Provision:
+        return Provision(
+            statute="PPC",
+            unit="section",
+            number=number,
+            heading=heading,
+            text=text,
+            in_force_from=dt.date(1860, 1, 1),
+        )
+
+    corpus = Corpus(
+        provisions=[provision("49", "Year", "reckoned according to the British calendar")],
+        as_at=dt.date(2026, 1, 1),
+    )
+    assistant = LawAssistant(corpus=corpus)
+    before = assistant._corpus_phrases()
+    assert ("british", "calendar") in before
+    assert ("vessel", "denotes") not in before
+
+    corpus.provisions.append(
+        provision("48", "Vessel", "the word vessel denotes anything made for conveyance")
+    )
+    after = assistant._corpus_phrases()
+    assert ("vessel", "denotes") in after, "the cache outlived the corpus it was built from"
+    assert ("british", "calendar") in after

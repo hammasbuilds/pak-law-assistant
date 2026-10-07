@@ -168,10 +168,15 @@ class LawAssistant:
     # Ranking parameters, forwarded to the index. Here so a sweep can reach them
     # without editing the source, which is how one sweep came to measure nothing.
     tuning: dict = field(default_factory=dict)
-    #: Every adjacent word pair the corpus's own text uses, built once. The guard
-    #: against another country's statute asks whether a jurisdiction word appears here
-    #: in front of the word it qualifies.
+    #: Every adjacent word pair the corpus's own text uses. The guard against another
+    #: country's statute asks whether a jurisdiction word appears here in front of the
+    #: word it qualifies.
     _pairs: set[tuple[str, str]] | None = field(default=None, repr=False)
+    #: How many provisions it was built from. `Corpus` rebuilds its index and its
+    #: swallowed-heading map when this changes, because appending to `provisions` is
+    #: what an amendment does - and this cache was keyed on `is None`, so an amendment
+    #: left the guard reading the corpus's vocabulary as it was before.
+    _pairs_at: int = field(default=-1, repr=False)
 
     def __post_init__(self) -> None:
         if self.search is None:
@@ -282,7 +287,7 @@ class LawAssistant:
         Act and every jurisdiction built out of ordinary legal English walked straight
         through the guard and was answered from Pakistani law.
         """
-        if self._pairs is None:
+        if self._pairs is None or self._pairs_at != len(self.corpus.provisions):
             from .retrieve import tokenise
 
             pairs: set[tuple[str, str]] = set()
@@ -291,6 +296,7 @@ class LawAssistant:
                     words = tokenise(field_text, keep_stopwords=True)
                     pairs.update(zip(words, words[1:]))
             self._pairs = pairs
+            self._pairs_at = len(self.corpus.provisions)
         return self._pairs
 
     def _answer(

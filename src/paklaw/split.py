@@ -45,6 +45,7 @@ from dataclasses import dataclass
 
 from .audit import provision_order, sequence_within
 from .citation import normalise_number
+from .corpus import normalise_source
 
 # A line that could open a provision: "20.", "302.", "2A.", "489-F.", optionally inside
 # a marker bracket "[20." left by a source, followed by a space or the end of the line.
@@ -601,42 +602,6 @@ def buried_numbers(body: str, number: str) -> list[str]:
         found.append(candidate)
         last = order
     return found
-
-
-#: Characters that render as punctuation a reader recognises and are not that
-#: punctuation, mapped to what they look like, plus the ones that are not characters at
-#: all. From the Pakistan Code's own text, which is the source this package is for.
-#:
-#:   * `U+037E GREEK QUESTION MARK` stands for a semicolon throughout: PPC s.53 reads
-#:     "Firstly, Qisas \u037e", and so does every item of every enumerated list in it.
-#:     `_SENTENCE` in `audit.py` splits sentences on `[.;:]`, so each of those lists
-#:     was one unsplittable sentence to the diff - the shape that gets a coarse
-#:     comparison instead of a word-by-word one.
-#:   * `U+00AD SOFT HYPHEN` is invisible and sits inside words, so a word carrying one
-#:     is a different word from the one a reader types.
-#:   * `U+2019` and the quotation marks are typography and are LEFT ALONE: they are
-#:     what the statute is written with, and the text is served to a reader.
-_LOOKALIKES = {
-    "\u037e": ";",  # GREEK QUESTION MARK
-    "\u00ad": "",  # SOFT HYPHEN
-    "\u200b": "",  # ZERO WIDTH SPACE
-    "\u2060": "",  # WORD JOINER
-    "\ufeff": "",  # ZERO WIDTH NO-BREAK SPACE, a BOM in the middle of a file
-    "\u00a0": " ",  # NO-BREAK SPACE
-    "\u2212": "-",  # MINUS SIGN
-}
-
-
-def normalise_source(text: str) -> str:
-    """Punctuation lookalikes and invisible characters, from raw statute text.
-
-    Not a general Unicode normalisation: only characters that make the text parse as
-    something other than what it reads as. See `_LOOKALIKES`.
-    """
-    for wrong, right in _LOOKALIKES.items():
-        if wrong in text:
-            text = text.replace(wrong, right)
-    return text
 
 
 def split_act(

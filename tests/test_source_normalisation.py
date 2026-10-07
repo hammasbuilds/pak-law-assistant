@@ -23,7 +23,8 @@ import pytest
 
 from paklaw.audit import _SENTENCE
 from paklaw.ingest import build_checked
-from paklaw.split import normalise_source, split_act
+from paklaw.corpus import normalise_source
+from paklaw.split import split_act
 from tests.test_retrieval_quality import _corpus_rows
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -133,3 +134,65 @@ def test_split_act_normalises_what_it_is_handed():
     joined = " ".join(row["text"] for row in rows)
     assert ";" not in joined
     assert ";" in joined
+
+
+# -- the entry point the server actually uses -----------------------------------------
+#
+# The first version of this fix called `normalise_source` from `split_act`, which is the
+# entry point for raw statute TEXT. The one the server uses is `PAKLAW_CORPUS`: a corpus
+# FILE, built by some other tool or by an older version of this importer, and that path
+# never went near it. The fix covered the path nobody runs in production.
+
+
+def test_a_corpus_file_is_normalised_on_load(tmp_path: Path):
+    """Through `load_corpus`, which is what `PAKLAW_CORPUS` goes through."""
+    import json
+
+    from paklaw.mcp_server import load_corpus
+
+    path = tmp_path / "corpus.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "statute": "PPC",
+                    "unit": "section",
+                    "number": "53",
+                    "heading": "Punishments;",
+                    "text": "The punishments are; Firstly, Qisas; Secondly, Diyat.",
+                    "in_force_from": "1860-01-01",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    corpus, _source = load_corpus(str(path))
+    provision = corpus.provisions[0]
+    assert ";" not in provision.text
+    assert ";" not in provision.heading
+    assert len([s for s in _SENTENCE.split(provision.text) if s.strip()]) == 3
+
+
+def test_a_provision_built_by_hand_cannot_carry_one():
+    """Not the importer, not `split_act`: the constructor.
+
+    Normalising in one importer leaves every other way of building a corpus - another
+    tool's exporter, a test, a script - free to produce provisions the diff cannot
+    split. `Provision.__post_init__` is the one place they all pass through.
+    """
+    import datetime as dt
+
+    from paklaw.corpus import Provision
+
+    provision = Provision(
+        statute="PPC",
+        unit="section",
+        number="53",
+        heading="Punishments;",
+        text="Firstly, Qisas; Secondly, Diyat­.",
+        in_force_from=dt.date(1860, 1, 1),
+    )
+    assert ";" not in provision.text
+    assert "­" not in provision.text
+    assert ";" not in provision.heading
+    assert provision.text.count(";") == 1, provision.text
