@@ -370,3 +370,118 @@ def test_a_well_formed_import_reports_nothing_swallowed(fixture, reader):
         unit, statute = "section", "PPC"
     _, report = split_act(text, statute=statute, in_force_from="1900-01-01", unit=unit)
     assert report["swallowed_headings"] == []
+
+
+# --- the rule that continues a contents list, and where it stops ----------------------
+
+
+def _act(contents: list[str], body: str) -> str:
+    """A minimal Act with a CONTENTS block, in the layout the importer reads."""
+    listed = "\n".join(contents)
+    return f"THE TEST ACT\n\n            CONTENTS\n\n{listed}\n\n{body}\n"
+
+
+def _candidate(number: str, start: int, heading: str = "A heading"):
+    """A weak candidate: the shape a run-in or bracketed heading produces."""
+    from paklaw.split import _Candidate
+
+    return _Candidate(
+        start=start,
+        body_start=start + 10,
+        number=number,
+        heading=heading,
+        weight=1.0,
+        order=(int("".join(c for c in number if c.isdigit())), 0),
+    )
+
+
+def test_two_consecutive_weak_headings_are_not_enough():
+    """One ascending number is a citation; two could be two citations in order.
+
+    A statute cites later sections constantly - "the procedure in sections 11 and 12
+    applies" - so a rule that split on two ascending numbers would invent provisions
+    out of a sentence. Three is the minimum, and this is what `MIN_TAIL_RUN` buys.
+    """
+    from paklaw.split import _tail_run
+
+    chain = [_candidate("57", 0)]
+    assert _tail_run(chain, [_candidate("58", 100), _candidate("59", 200)]) == []
+
+
+def test_three_consecutive_weak_headings_are_a_contents_list_that_stopped():
+    from paklaw.split import _tail_run
+
+    chain = [_candidate("57", 0)]
+    weak = [_candidate("58", 100), _candidate("59", 200), _candidate("60", 300)]
+    assert [c.number for c in _tail_run(chain, weak)] == ["58", "59", "60"]
+
+
+def test_a_gap_ends_the_run():
+    """3, 4, 5 then 9 is not a page-range excerpt. The run stops at the gap, and what
+    is past it stays where it was found - which the detector then reports."""
+    from paklaw.split import _tail_run
+
+    chain = [_candidate("57", 0)]
+    weak = [
+        _candidate("58", 100),
+        _candidate("59", 200),
+        _candidate("60", 300),
+        _candidate("64", 400),
+    ]
+    assert [c.number for c in _tail_run(chain, weak)] == ["58", "59", "60"]
+
+
+def test_the_run_only_looks_after_the_last_accepted_provision():
+    """A number earlier in the text than the last heading is a cross-reference in a
+    body that has already been parsed, not a continuation of the contents."""
+    from paklaw.split import _tail_run
+
+    chain = [_candidate("57", 500)]
+    weak = [_candidate("58", 100), _candidate("59", 200), _candidate("60", 300)]
+    assert _tail_run(chain, weak) == []
+
+
+def test_nothing_to_continue_is_not_a_run():
+    """A sweep over an empty list passes, so both empty cases are stated."""
+    from paklaw.split import _tail_run
+
+    assert _tail_run([], [_candidate("58", 100)]) == []
+    assert _tail_run([_candidate("57", 0)], []) == []
+
+
+def test_three_consecutive_unlisted_headings_continue_the_contents():
+    """The shape the Pakistan Code excerpt has: a contents list that ends early."""
+    text = _act(
+        ["1. Short title", "2. Definitions"],
+        "1. Short title. This Act may be cited as the Test Act.\n"
+        "2. Definitions. In this Act, words have their ordinary meaning.\n"
+        "3. Procedure. An application shall be made in writing.\n"
+        "4. Appeals. An appeal lies to the High Court.\n"
+        "5. Rules. The Federal Government may make rules.\n",
+    )
+    rows, report = split_act(text, statute="TEST", in_force_from="2020-01-01")
+    assert [r["number"] for r in rows] == ["1", "2", "3", "4", "5"], [r["number"] for r in rows]
+    assert report["swallowed_headings"] == []
+    assert "Short title" in by_number(rows)["1"]["heading"]
+    # And nothing from s.3 is left in s.2's body, which is the failure being fixed.
+    assert "Procedure" not in by_number(rows)["2"]["text"]
+
+
+def test_the_other_two_fixtures_are_unchanged_by_the_rule():
+    """A rule that fires on a well-formed source is a rule that invents provisions.
+
+    Both of these have contents that match their text, so the tail run must find
+    nothing: the Constitution excerpt parses to articles 1-8 and the pakistani.org page
+    to ss.300-303, as they did before.
+    """
+    constitution = strip_stars(pakistan_code(read("constitution_pakistan_code_pp18-20.txt")).text)
+    rows, report = split_act(
+        constitution, statute="CONST", in_force_from="1973-08-14", unit="article"
+    )
+    assert [r["number"] for r in rows] == ["1", "2", "2A", "3", "4", "5", "6", "7", "8"]
+    assert report["swallowed_headings"] == []
+
+    text, _ = pakistani_org(read("ppc_pakistani_org_ss300-303.html"))
+    rows, report = split_act(text, statute="PPC", in_force_from="2016-01-01")
+    assert [r["number"] for r in rows] == ["300", "301", "302", "303"]
+    assert report["swallowed_headings"] == []
