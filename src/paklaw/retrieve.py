@@ -252,6 +252,47 @@ NOT_A_SUBJECT = frozenset(
         # faith", "made in good faith"), so they are absent from this list even though
         # adding them would answer more questions. A word earns a place here by being
         # impossible to legislate about, not by being inconvenient.
+        #
+        # The verbs of ASKING. "what does the law say about punishment of qatl-i-amd?"
+        # was refused with "'say' appears in no provision here" - of a corpus whose
+        # s.302 is headed "Punishment of qatl-i-amd". Every one of 26 heading
+        # questions generated from the corpus was refused this way, 25 of them on a
+        # word like this one, and "what does the law say about X" is close to the most
+        # natural phrasing a reader has.
+        #
+        # These qualify under the rule above: a statute does not legislate about
+        # saying, telling or asking in the sense a questioner uses them. "state" and
+        # "provide" are deliberately absent - a statute provides for things and names
+        # the State - and so is "declare", which appears in constitutions.
+        "say",
+        "says",
+        "said",
+        "tell",
+        "tells",
+        "told",
+        "ask",
+        "asks",
+        "asked",
+        "asking",
+        "explain",
+        "explains",
+        "describe",
+        "describes",
+        "summarise",
+        "summarize",
+        "list",
+        "lists",
+        "show",
+        "shows",
+        "find",
+        "finds",
+        "look",
+        "looks",
+        "know",
+        "knows",
+        "wondering",
+        "wonder",
+        "please",
         "get",
         "gets",
         "got",
@@ -616,6 +657,28 @@ class BM25Index:
         self._average_length = sum(lengths) / len(lengths) if lengths else 0.0
         return self
 
+    def absent_terms(self, terms: Sequence[str]) -> list[str]:
+        """Which of `terms` the corpus holds no word for, in any form.
+
+        Public because a caller with NO hits at all needs the same answer a caller
+        with hits gets. "what does the law say about dacoity?" produced no hits -
+        every other word of it is a stopword or a verb of asking - and came back "no
+        provision in force on that date matches the question", where the question's
+        own subject was the thing missing and could have been named.
+
+        "in any form" has to mean in any form: a term is absent only when neither the
+        index nor the corpus's raw text holds a word that stems to it, or else the
+        refusal tells a reader their word is missing from the statute book when the
+        statute book contains it as a stopword.
+        """
+        return sorted(
+            term
+            for term in set(terms)
+            if term not in NOT_A_SUBJECT
+            and not any(self._document_frequency.get(form) for form in self._forms(term))
+            and not (set(expand(term)) & self._text_stems)
+        )
+
     def _forms(self, term: str) -> set[str]:
         """Index terms that count as `term`: itself, its inflections, its statute word.
 
@@ -656,17 +719,7 @@ class BM25Index:
             return []
 
         # Computed once: it depends on the question and the corpus, not the provision.
-        # "in any form" has to mean in any form. A term is unknown only when neither
-        # the index nor the corpus's raw text holds a word that stems to it - otherwise
-        # the refusal tells the reader their word is absent from the statute book when
-        # the statute book contains it as a stopword.
-        unknown = sorted(
-            term
-            for term in set(terms)
-            if term not in NOT_A_SUBJECT
-            and not any(self._document_frequency.get(form) for form in self._forms(term))
-            and not (set(expand(term)) & self._text_stems)
-        )
+        unknown = self.absent_terms(terms)
 
         hits: list[Hit] = []
         for index, provision in enumerate(self.documents):
@@ -825,6 +878,18 @@ class LawSearch:
         as_of = dt.date.fromisoformat(as_of) if isinstance(as_of, str) else as_of
         where = (lambda p: p.statute == statute) if statute else None
         return self._index_for(as_of).search(query, limit=limit, where=where)
+
+    def absent_terms(self, query: str, *, as_of: str | dt.date) -> list[str]:
+        """Which of the query's content terms the corpus holds no word for on that date.
+
+        Date-anchored like everything else here, and for the same reason: whether a
+        word is in the statute book depends on which statute book - a provision
+        repealed before the asked date is not in it. An undated version of this would
+        name a word as absent because the only provision containing it was not yet in
+        force.
+        """
+        as_of = dt.date.fromisoformat(as_of) if isinstance(as_of, str) else as_of
+        return self._index_for(as_of).absent_terms(tokenise(query))
 
     def by_citation(self, key: str, *, as_of: str | dt.date) -> Provision | None:
         """Look up a provision the user named directly.

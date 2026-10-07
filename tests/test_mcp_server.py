@@ -750,7 +750,11 @@ def _declared_statuses() -> set[str]:
 #: gap, because a reachability check that quietly covers two of nine is the shape of
 #: the test this replaced.
 REACHES = {
-    "nothing_matched": ("zzzz qqqq xxxx", "2026-01-01"),
+    # A question with NO content: every word is a stopword or a verb of asking, so
+    # there is no subject to report as absent. "zzzz qqqq xxxx" used to land here and
+    # now lands on `subject_not_in_corpus`, which names the words - the better answer,
+    # and the reason this case had to change.
+    "nothing_matched": ("what does the law say?", "2026-01-01"),
     "subject_not_in_corpus": ("what is the punishment for dacoity?", "2026-01-01"),
     # At DEFAULT thresholds, which is the gap finding #7 named: the only test for
     # `weak_match` set `min_score=1000.0`, proving the knob exists rather than that

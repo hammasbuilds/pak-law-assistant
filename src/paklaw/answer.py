@@ -406,9 +406,27 @@ class LawAssistant:
         hits = self.search.search(asked, as_of=as_of_date, limit=self.max_passages, statute=statute)
 
         if not hits:
+            # Name the absent word when there is one. "what does the law say about
+            # dacoity?" produced no hits at all - every other word of it is a stopword
+            # or a verb of asking - and came back "no provision in force on that date
+            # matches the question", which is true and says nothing. The same question
+            # phrased "what is the punishment for dacoity?" DID name it, because
+            # `punishment` matched something and the code reached the branch below
+            # that reports unknown terms. Two phrasings of one question, two qualities
+            # of answer, for no reason the reader can see.
+            missing = self.search.absent_terms(asked, as_of=as_of_date)
             result.refused = True
-            result.refusal_status = "nothing_matched"
-            result.refusal_reason = REFUSAL_NOTHING_FOUND
+            if missing:
+                result.refusal_status = "subject_not_in_corpus"
+                result.refusal_reason = (
+                    f"{REFUSAL_NOT_IN_CORPUS}: "
+                    f"{', '.join(repr(t) for t in missing)} "
+                    f"{'appear' if len(missing) > 1 else 'appears'} in no provision "
+                    "here, and nothing else in the question matched either."
+                )
+            else:
+                result.refusal_status = "nothing_matched"
+                result.refusal_reason = REFUSAL_NOTHING_FOUND
             return result
 
         if hits[0].score < self.min_score:

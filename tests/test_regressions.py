@@ -597,7 +597,17 @@ def test_the_same_question_without_the_qualifier_is_still_answered():
         ("what is section 302 of the Indian Penal Code?", "act_not_recognised"),
         ("what does section 302 say?", "no_act_named"),
         ("section 999 PPC", "unknown_provision"),
-        ("what are the rules on cryptocurrency exchange licensing?", "nothing_matched"),
+        # `subject_not_in_corpus`, not `nothing_matched`: every content word of this
+        # is absent, and naming them is more use than "nothing matched". It was the
+        # latter only because the question produced no hits at all and that branch did
+        # not look at which words were missing - so "what are the rules on
+        # cryptocurrency exchange licensing?" and "what is the punishment for
+        # cryptocurrency?" got different qualities of answer for no visible reason.
+        ("what are the rules on cryptocurrency exchange licensing?", "subject_not_in_corpus"),
+        # What `nothing_matched` means now: a question with no content at all. Every
+        # word is a stopword or a verb of asking, so there is no subject to report as
+        # absent - which is a different thing from a subject the corpus does not hold.
+        ("what does the law say?", "nothing_matched"),
         ("what is the punishment for attempt to murder?", "different_offence"),
     ],
 )

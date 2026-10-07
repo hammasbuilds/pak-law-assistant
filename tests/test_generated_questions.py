@@ -12,7 +12,7 @@ question came from, so nothing was chosen.
 
 What it measures, over 101 questions on the 26-provision fixture corpus:
 
-    right 69    wrong 5    refused 27
+    right 87    wrong 5    refused 9
 
 Three of those five are genuinely ambiguous rather than wrong. Every word of the
 question appears in BOTH the expected provision and the one cited - s.54 and s.55 are
@@ -22,10 +22,21 @@ counting it as an error would make this test a measurement of the generator. The
 that remain are in the s.53-s.57 cluster, where the provisions share most of their
 vocabulary, and they are recorded as the figure rather than explained away.
 
-The refusals are the interesting half: 27 of 101, a quarter, where a window of a
-provision's own words did not reach the gate. A refusal costs a reader a lookup, so
-that is the right side to err on - but it is a number this repository had no way to
-see before, because every hand-written answerable question was written to be answered.
+The refusals were the interesting half and are the reason this file exists. It first
+measured 27 of 101 - a quarter of questions drawn from a provision's own words turned
+away - and 26 of those were the heading questions, EVERY ONE of them. "what does the
+law say about punishment of qatl-i-amd?" was refused with "'say' appears in no
+provision here", of a corpus whose s.302 is headed "Punishment of qatl-i-amd".
+
+The verbs of asking were not in `NOT_A_SUBJECT`, so `say`, `tell`, `show` and
+`explain` were each read as the subject of the question. Adding them took this set
+from 69 right to 87 with no new wrong answers and left the hand-written benchmark
+unchanged - which is the whole argument for a population nobody chose: every
+hand-written answerable question was phrased to be answered, so the commonest phrasing
+a reader actually uses was the one nothing tested.
+
+Nine refusals remain, and a refusal costs a reader a lookup where a wrong citation
+costs them the argument, so that is the right side to err on.
 """
 
 from __future__ import annotations
@@ -74,7 +85,7 @@ _COMMON = {
 
 #: The measurement, pinned. `right + wrong + refused` is asserted against the count of
 #: questions, so none of the three can move without one of the others.
-EXPECTED = {"asked": 101, "right": 69, "wrong": 5, "refused": 27}
+EXPECTED = {"asked": 101, "right": 87, "wrong": 5, "refused": 9}
 
 #: Of the five, the ones where the question's every word is in the cited provision as
 #: well as in the expected one. Named, because "three are ambiguous" is a claim and
@@ -160,14 +171,15 @@ def test_the_ambiguous_mistakes_really_are_ambiguous(corpus, assistant):
     assert both == AMBIGUOUS, [m for m in mistakes]
 
 
-def test_a_quarter_of_the_generated_questions_are_refused(corpus, assistant):
+def test_the_refusal_share_is_what_it_says(corpus, assistant):
     """The number this repository could not see.
 
-    Every hand-written answerable question was written to be answered, so the share of
-    a provision's own words that does NOT reach the gate was invisible. A refusal costs
-    a reader a lookup where a wrong citation costs them the argument, so this is the
-    right side to err on - and it is a cost, stated.
+    It was a quarter, and 26 of those 27 were the heading questions - refused because
+    `say`, `tell` and `show` were read as the subject of the question. It is 9 of 101
+    now. Bounded rather than pinned on its own: the exact counts are pinned by
+    `test_the_figures_are_the_ones_the_docstring_states`, and this says the share is
+    small, which is the claim.
     """
     measured, _ = _measure(corpus, assistant)
     share = measured["refused"] / measured["asked"]
-    assert 0.20 < share < 0.35, share
+    assert 0.03 < share < 0.15, share
