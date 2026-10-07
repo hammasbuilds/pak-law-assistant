@@ -13,15 +13,39 @@
   code in the supply chain at run time.
 - **Bounded inputs and bounded work.** Text arguments are capped at 200,000 characters
   and list results are paged. The two places where the CORPUS rather than the argument
-  sets the size are bounded too. `compare_versions` matches sentences first and only then
-  compares the words of each changed passage, with at most 1,200 words in a passage and
-  at most 500 changed passages reported. The word comparison is cubic on the text an
-  amending Act produces — measured at 7.5s for 1,000 alternating words, 59s for 2,000 and
-  206s for 3,000 — so a 34,000-character provision, which is ordinary for a tax
-  ordinance, held this single-threaded server for 56 seconds, and a
-  1.4-million-character one produced a 5.8 MB reply from 90 bytes of arguments. Both are
-  now hundredths of a second. Over either bound the result says so rather than truncating
-  silently.
+  sets the size are bounded too.
+
+  `compare_versions` matches sentences first and only then compares the words of each
+  changed passage. The word comparison is the expensive one, and its cost is in the
+  content rather than the length. Measured on this machine, over word lists, with the
+  generators in `tests/test_diff_is_bounded.py`:
+
+  | words | alternating shared/unique | statute prose, 1 word in 50 changed |
+  |------:|--------------------------:|------------------------------------:|
+  |   500 |                     1.25s |                               0.03s |
+  | 1,000 |                     8.67s |                               0.24s |
+  | 2,000 |                    84.59s |                               2.17s |
+  | 6,000 |                         — |                              58.89s |
+
+  Far worse than quadratic, and the same 1,000 words are 8.67s or 0.24s depending only
+  on how they alternate — so a cap on the length is the wrong instrument, and a timing
+  quoted without its shape, as this file once quoted these, cannot be reproduced.
+
+  Three bounds. Precise comparison draws on a budget of **250,000 pairwise word
+  comparisons for the whole call**, which is about 1.3s at the worst shape above; a
+  passage past the budget is compared with the fast heuristic instead, which handles
+  200,000 words in a second. A reply carries at most **500 changed passages**,
+  **200,000 characters**, and **2,000 characters of either side of any one row**. The
+  row limits are not redundant: "all of this was replaced by all of that" is a single
+  row holding both texts, and one such row measured 4.38 MB.
+
+  Measured end to end, from about 90 bytes of arguments: a 34,000-character provision
+  held this single-threaded server for 56 seconds and a 1.4-million-character one
+  produced a 5.8 MB reply. Both are now hundredths of a second and a few kilobytes.
+
+  Every bound reports itself in the result rather than truncating silently, and none of
+  them declines to compare: a coarse answer about what changed is a true statement about
+  the law, and a refusal to look is not.
 
   This line used to say only that arguments are capped, which was true and did not cover
   the thing that made the server slow.

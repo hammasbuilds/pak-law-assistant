@@ -241,6 +241,14 @@ NOT_A_SUBJECT = frozenset(
         "really",
         "mean",
         "means",
+        # "the meaning of the word vessel" is s.48 PPC, and `meaning` was the
+        # rarest word in it: a penal code legislates about vessels and not about
+        # meaning. `mean` and `means` were here and the gerund was not, which is
+        # the kind of gap a table has and a rule does not.
+        "meaning",
+        "meanings",
+        "definition",
+        "definitions",
         "happens",
         "called",
         "regarding",
@@ -380,8 +388,15 @@ def _stems(term: str) -> set[str]:
     # and "ion" to "eliminat", and it is the second that meets "eliminate"; stopping at
     # the first kept the pair apart. The extra stems only ever add a way for two
     # spellings of one word to meet - a stem that matches nothing costs nothing.
+    # Three characters, not four. Four kept `payment` from reaching `pay` and `giving`
+    # from reaching `giv`, so the refusal that says a word appears here "in any form"
+    # said it of `paid` over a corpus containing `payment`. Lowering it merges more
+    # aggressively, so it was measured: identical on the 121-question generated
+    # population (118 right, 3 wrong, 0 refused - the same three ambiguous pairs) and
+    # identical on the hand-written set (45 right, 0 wrong, 0 of 6 unanswerable
+    # questions answered).
     for suffix in _SUFFIXES:
-        if term.endswith(suffix) and len(term) - len(suffix) >= 4:
+        if term.endswith(suffix) and len(term) - len(suffix) >= 3:
             stem = term[: -len(suffix)]
             out.add(stem)
             # English doubles the final consonant before -ing and -ed, and the statute
@@ -389,9 +404,99 @@ def _stems(term: str) -> set[str]:
             # "transmits" strips to "transmit", and the two never met. Both forms are
             # kept rather than one chosen, because the shortened form of a word that
             # genuinely ends in a double letter ("pass" -> "pas") matches nothing.
-            if len(stem) >= 4 and stem[-1] == stem[-2]:
+            if len(stem) >= 3 and stem[-1] == stem[-2]:
                 out.add(stem[:-1])
     return out
+
+
+#: Words that mean the same thing and do not share a stem, as groups rather than pairs.
+#:
+#: Suffix-stripping cannot reach any of these. `paid` is not `pay` plus a suffix,
+#: `given` is not `give` plus one, and `empowered` differs from `power` by a PREFIX -
+#: so the refusal that tells a reader their word appears in no provision "in any form"
+#: said it of `paid` over a corpus containing `payment`, and of `giving` over one
+#: containing `given`. A refusal states a fact about the statute book, and that one was
+#: false of it.
+#:
+#: English irregular verbs are a closed list, so this is a table and not a rule, and
+#: a statute book is written in a particular part of it: `held`, `found`, `bound`,
+#: `sworn`, `struck`, `forbidden`, `sent`, `dealt`, `brought`. With them go the
+#: nominalisations whose spelling diverges from the verb's, where the same gap opens:
+#: `proof`/`prove`, `theft`/`steal`, `sale`/`sell`, `death`/`die`.
+#:
+#: SUBSTANTIVE words only. A first version of this held `say`, `do`, `be`, `have`,
+#: `make` and `take`, which cost answers rather than winning them: giving `say` a
+#: set of forms made it a content word, so `what does the law say about "animal"?`
+#: was refused for missing one of its two content words - the word being the frame
+#: of the question rather than any part of its subject. Nor are near-synonyms here:
+#: `gift` is not an inflection of `give`, and `breach` is not one of `break`. Those
+#: belong in `STATUTE_VOCABULARY`, where a claim about meaning can be read as one.
+_IRREGULAR_GROUPS: tuple[tuple[str, ...], ...] = (
+    # Verbs a statute is written in.
+    ("pay", "pays", "paid", "paying", "payment", "payments", "payable", "payee", "payer"),
+    ("give", "gives", "gave", "given", "giving"),
+    ("hold", "holds", "held", "holding", "holder"),
+    ("find", "finds", "found", "finding", "findings"),
+    ("bind", "binds", "bound", "binding"),
+    ("forbid", "forbids", "forbade", "forbidden", "forbidding"),
+    ("strike", "strikes", "struck", "striking"),
+    ("send", "sends", "sent", "sending"),
+    ("lend", "lends", "lent", "lending"),
+    ("spend", "spends", "spent", "spending"),
+    ("bring", "brings", "brought", "bringing"),
+    ("seek", "seeks", "sought", "seeking"),
+    ("think", "thinks", "thought", "thinking"),
+    ("catch", "catches", "caught", "catching"),
+    ("swear", "swears", "swore", "sworn", "swearing"),
+    ("steal", "steals", "stole", "stolen", "stealing", "theft", "thefts", "thief", "thieves"),
+    ("break", "breaks", "broke", "broken", "breaking"),
+    ("speak", "speaks", "spoke", "spoken", "speaking"),
+    ("write", "writes", "wrote", "written", "writing", "writings"),
+    ("know", "knows", "knew", "known", "knowing", "knowingly", "knowledge"),
+    ("choose", "chooses", "chose", "chosen", "choosing"),
+    ("bear", "bears", "bore", "borne", "bearing", "bearer"),
+    ("lose", "loses", "lost", "losing", "loss", "losses"),
+    ("meet", "meets", "met", "meeting"),
+    ("sell", "sells", "sold", "selling", "sale", "sales", "seller"),
+    ("tell", "tells", "told", "telling"),
+    ("sit", "sits", "sat", "sitting"),
+    ("stand", "stands", "stood", "standing"),
+    ("deal", "deals", "dealt", "dealing"),
+    ("keep", "keeps", "kept", "keeping", "keeper"),
+    ("leave", "leaves", "left", "leaving"),
+    ("arise", "arises", "arose", "arisen", "arising"),
+    ("begin", "begins", "began", "begun", "beginning"),
+    ("run", "runs", "ran", "running"),
+    ("fall", "falls", "fell", "fallen", "falling"),
+    ("rise", "rises", "rose", "risen", "rising"),
+    ("drive", "drives", "drove", "driven", "driving", "driver"),
+    ("hide", "hides", "hid", "hidden", "hiding"),
+    ("shoot", "shoots", "shot", "shooting"),
+    ("flee", "flees", "fled", "fleeing"),
+    # Nominalisations whose spelling diverges from the verb's, where the same gap opens.
+    ("power", "powers", "empower", "empowers", "empowered", "empowering", "powered"),
+    ("prove", "proves", "proved", "proven", "proving", "proof", "proofs"),
+    ("die", "dies", "died", "dying", "death", "deaths", "dead"),
+    ("live", "lives", "lived", "living", "life"),
+    ("judge", "judges", "judged", "judging", "judgment", "judgments", "judicial"),
+    ("believe", "believes", "believed", "believing", "belief", "beliefs"),
+    ("relieve", "relieves", "relieved", "relieving", "relief"),
+    ("marry", "marries", "married", "marrying", "marriage", "marriages"),
+    ("child", "children"),
+    ("person", "persons", "people"),
+    ("wife", "wives"),
+    ("woman", "women"),
+    ("man", "men"),
+)
+
+#: The groups above, read as a lookup. Every member maps to every other member, which
+#: is what the three tables below this one do pairwise.
+IRREGULAR_FORMS: dict[str, tuple[str, ...]] = {}
+for _group in _IRREGULAR_GROUPS:
+    for _member in _group:
+        IRREGULAR_FORMS[_member] = IRREGULAR_FORMS.get(_member, ()) + tuple(
+            other for other in _group if other != _member
+        )
 
 
 # The three tables above are keyed by one spelling of each word, and a question uses
@@ -399,7 +504,7 @@ def _stems(term: str) -> set[str]:
 # key is indexed under its stems as well: without this the bridge to the statute's own
 # vocabulary is only crossed by the exact inflection the table happens to name.
 _BY_STEM: dict[str, tuple[str, ...]] = {}
-for _table in (STATUTE_VOCABULARY, _VOCABULARY_REVERSE, ENGLISH_VARIANTS):
+for _table in (STATUTE_VOCABULARY, _VOCABULARY_REVERSE, ENGLISH_VARIANTS, IRREGULAR_FORMS):
     for _word, _related in _table.items():
         for _stem in _stems(_word):
             _BY_STEM[_stem] = _BY_STEM.get(_stem, ()) + _related
@@ -469,6 +574,38 @@ def tokenise(
     return [t for t in tokens if t not in LEGAL_STOPWORDS or t in keep]
 
 
+#: How much rarer the question's rarest word has to be than its next-rarest before
+#: `Hit.missing_key_term` treats it as THE subject of the question. `max` always
+#: returns something, and over a set of equally common words it returns an arbitrary
+#: one, which is not a fact about the question.
+KEY_TERM_MARGIN = 1.0
+
+#: The information coverage above which `Hit.missing_key_term` stands down. A question
+#: whose remaining words are already an overwhelming match for the provision is a
+#: question about that provision, whatever its rarest word happens to be: "acting
+#: without due care and attention" is s.52 PPC quoted with one word added, and `acting`
+#: is both the rarest word in it and absent from s.52, which legislates about good
+#: faith in a sentence containing no form of `act`.
+#:
+#: Swept over every set in the suite - the hand-written answerable pairs, the
+#: paraphrases, the 121-question generated population, and the five sets that must be
+#: refused. `hand` is right / wrong / refused over 51 answerable questions, `leaked` is
+#: questions that must refuse and did not:
+#:
+#:      ceiling   hand          generated     leaked
+#:      rule off  45R 0W 6X     118R 3W 0X    1
+#:      0.70      44R 0W 7X     118R 3W 0X    0
+#:      0.65      44R 0W 7X     118R 3W 0X    0
+#:      0.60      45R 0W 6X     118R 3W 0X    0
+#:      0.55      45R 0W 6X     118R 3W 0X    0
+#:
+#: 0.60 answers everything the rule-off column answers and leaks nothing: the one
+#: leak is "what fine is payable for qatl-i-amd as qisas?", answered from s.302 PPC,
+#: which prescribes death or imprisonment and no fine. At 0.65 and 0.70 the rule also
+#: catches "the meaning of the word vessel", which is s.48 - the cost of firing on a
+#: question whose rarest word is its frame, and why `meaning` is in `NOT_A_SUBJECT`.
+KEY_TERM_CEILING: float | None = 0.60
+
 @dataclass
 class Hit:
     provision: Provision
@@ -517,6 +654,61 @@ class Hit:
         """
         total = len(self.matched_terms) + len(self.missing_terms)
         return len(self.matched_terms) / total if total else 0.0
+
+    @property
+    def missing_key_term(self) -> str:
+        """The question's most distinctive content word, when this provision lacks it.
+
+        "" when the provision has it, or when nothing distinguishes the words.
+
+        `information_coverage` is a share, and a share can be cleared while the whole
+        subject of the question is missing: "what fine is payable for qatl-i-amd as
+        qisas?" matched `qatl`, `amd` and `qisas` for 54% of the information and missed
+        `fine` and `payable`, which are the two rarest words in it and the two it asks
+        about. s.302 prescribes no fine. A review measured the general case - a missing
+        distinctive word is tolerated in 66.8% of a 3,999-question probe - so this is
+        the rule the share needs beside it rather than a tighter share.
+
+        The MOST distinctive word only. Every question drops some word the provision
+        happens to lack, and refusing on any of them would refuse nearly everything;
+        the rarest word of a question is the one it is about, which is the same
+        reasoning `information_coverage` rests on, applied to the top of the
+        distribution instead of to the sum.
+        """
+        if not self.term_weights or len(self.term_weights) < 2:
+            return ""
+        # `NOT_A_SUBJECT` first, and this is the whole difficulty with the rule: the
+        # rarest word of a question is USUALLY what it is about, and sometimes it is
+        # the frame. "mean" is the rarest word in "what does the word animal mean in
+        # the Penal Code?" - a penal code legislates about animals and not about
+        # meaning - so without this the rule refused a question s.47 answers, which is
+        # the same mistake `absent_terms` already keeps this list to avoid.
+        weights = {
+            term: weight
+            for term, weight in self.term_weights.items()
+            if term not in NOT_A_SUBJECT
+        }
+        if len(weights) < 2:
+            return ""
+        term, weight = max(weights.items(), key=lambda kv: (kv[1], kv[0]))
+        if term in self.matched_terms:
+            return ""
+        # A word the corpus has never seen is `unknown_terms`, which says something
+        # else: that the subject is absent from the book rather than from this section.
+        if term in self.unknown_terms:
+            return ""
+        # And it has to be distinctive in absolute terms, not merely the largest of a
+        # flat set: `max` always returns something, and over five words of equal
+        # weight it returns an arbitrary one.
+        others = sorted(w for t, w in weights.items() if t != term)
+        if not others or weight < others[-1] * KEY_TERM_MARGIN:
+            return ""
+        # And not when the rest of the question already matches overwhelmingly. A
+        # missing rare word is evidence that the provision is about something else
+        # only where there is something else for it to be about.
+        if KEY_TERM_CEILING is not None and self.information_coverage >= KEY_TERM_CEILING:
+            return ""
+        return term
 
     @property
     def information_coverage(self) -> float:

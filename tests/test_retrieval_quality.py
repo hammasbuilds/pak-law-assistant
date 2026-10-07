@@ -670,20 +670,69 @@ def test_the_third_of_those_three_is_a_tie_and_is_recorded_as_one(assistant):
 # --- what a refusal says is true -------------------------------------------------------
 
 
-def test_the_subject_refusal_does_not_assert_something_false(assistant):
-    """ "acting" is absent from the corpus; what the question is about is not.
+def test_a_question_in_the_statutes_own_words_is_answered_from_it(assistant):
+    """ "acting without due care and attention" is s.52 PPC, nearly verbatim.
 
-    s.52 PPC reads "…done or believed without due care and attention", so telling a
-    reader the corpus has no provision about this question was a wrong statement of
-    fact delivered with a refusal's authority. The refusal still fires - it earns its
-    keep, by ablation - but it now says what is true: the word appears in no provision.
+    This test used to assert the opposite - that the question is REFUSED, with the
+    refusal naming `acting` as a word appearing in no provision. The refusal reason was
+    corrected once already, from "the question names something this corpus has no
+    provision about" (false: s.52 reads "done or believed without due care and
+    attention") to "'acting' appears in no provision here", which was true of the index
+    and true only because `_stems` would not strip `-ing` from a five-letter word: the
+    floor was four characters and `acting` leaves three.
+
+    With a floor of three, `acting` reaches `act`, which this corpus uses throughout,
+    and the question is answered from the provision it is quoting. A true statement
+    about the index was standing in for the answer, and the answer is better.
     """
     answer = assistant.answer("acting without due care and attention", as_of="2026-01-01")
-    assert answer.refused
-    assert answer.refusal_status == "subject_not_in_corpus"
-    assert "'acting' appears in no provision here" in answer.refusal_reason
-    assert "has no provision about" not in answer.refusal_reason
+    assert not answer.refused, (answer.refusal_status, answer.refusal_reason)
+    assert answer.passages[0].citation == "Section 52 PPC", [
+        p.citation for p in answer.passages
+    ]
+    assert "due care and attention" in answer.passages[0].text
 
+
+def test_a_refusal_never_says_a_word_is_absent_when_a_form_of_it_is_present(assistant):
+    """The general version of what that test was reaching for.
+
+    A refusal reading "X appears in no provision here" is a statement about the statute
+    book, and `_stems` decides whether it is true. Three pairs it used to get wrong:
+    `paid` over a corpus containing `payment`, `giving` over one containing `given`, and
+    `empowered` over one containing `power`. The first two were the stem floor and the
+    third is irregular - no suffix rule reaches it - so there is a table for those now.
+    """
+    from paklaw.retrieve import tokenise
+
+    held = set()
+    for provision in assistant.corpus.provisions:
+        for word in tokenise(provision.text, keep_stopwords=True) + tokenise(
+            provision.heading, keep_stopwords=True
+        ):
+            held.add(word)
+
+    liars = []
+    for question in (
+        "what must be paid under the law?",
+        "what is payable on default?",
+        "who is empowered to commute a sentence?",
+        "what powers does the Provincial Government have?",
+        "what is given in good faith?",
+    ):
+        answer = assistant.answer(question, as_of="2026-01-01")
+        if answer.refusal_status != "subject_not_in_corpus":
+            continue
+        for word in ("paid", "payable", "empowered", "powers", "given"):
+            if repr(word) in answer.refusal_reason:
+                # Named as absent. Is a form of it present?
+                from paklaw.retrieve import expand
+
+                if expand(word) & held:
+                    liars.append((question, word, sorted(expand(word) & held)[:4]))
+    assert liars == [], (
+        "a refusal named a word as appearing in no provision while the corpus holds a "
+        f"form of it: {liars}"
+    )
 
 def test_an_adverb_does_not_veto_an_answer(assistant):
     answer = assistant.answer("can a sentence of death never be commuted?", as_of="2026-01-01")
@@ -777,7 +826,15 @@ IN_VOCABULARY_MUST_REFUSE: dict[str, str] = {
     "what is the tazir for qatl-i-khata?": "different_offence",
     "may a Court of Session pass a sentence of death for qatl-i-khata?": "different_offence",
     "may the President remit a sentence of imprisonment for life?": "subject_not_in_corpus",
-    "what fine is payable for qatl-i-amd as qisas?": "subject_not_in_corpus",
+    # Was `subject_not_in_corpus`, on the ground that `payable` appears in no
+    # provision "in any form" - of a corpus whose s.65 and s.66 are about a fine
+    # payable, `payable` being the adjective of `payment`. The claim was false, and it
+    # was the only thing refusing this question: fixing it left s.302 PPC answering
+    # "what fine is payable", at an information coverage of 0.524, when s.302
+    # prescribes death or imprisonment and no fine at all. `weak_match` now, through
+    # `Hit.missing_key_term`: the corpus holds `payable`, and the nearest provision on
+    # the rest of the question does not contain it.
+    "what fine is payable for qatl-i-amd as qisas?": "weak_match",
     "does the State grant equal protection to a vessel?": "subject_not_in_corpus",
     "what punishment does the Constitution prescribe for discrimination?": "subject_not_in_corpus",
 }
@@ -1185,14 +1242,19 @@ def test_the_hard_refusals_reach_more_than_one_condition(assistant):
     assert len(reached) >= 3, reached
     assert max(reached.values()) <= len(IN_VOCABULARY_MUST_REFUSE) - 3, reached
 
-    # Measured: 4 subject_not_in_corpus, 2 weak_match, 2 different_offence. Four of
-    # the eight DO reach the vocabulary gate, which is worth stating because the set
+    # Measured: 3 subject_not_in_corpus, 3 weak_match, 2 different_offence. Three of
+    # the eight reach the vocabulary gate, which is worth stating because the set
     # is named for being in vocabulary: what is in the corpus is each question's
     # SUBJECT - qatl-i-amd, pardon, the Constitution - while a word it turns on is
-    # not, "remit" and "payable" and "prescribe" among them. That is the gate doing
+    # not, "remit" and "prescribe" among them. That is the gate doing
     # its job on a question whose subject the corpus holds, which the other 26 cannot
     # demonstrate, and it is three gates between eight questions either way.
-    assert reached == Counter({"subject_not_in_corpus": 4, "weak_match": 2, "different_offence": 2})
+    #
+    # It was 4 / 2 / 2. "what fine is payable for qatl-i-amd as qisas?" moved from the
+    # vocabulary gate to `weak_match`, because the claim that got it there - `payable`
+    # appearing in no provision "in any form" - is false of a corpus containing
+    # `payment`. All eight still refuse; one of them now refuses for a true reason.
+    assert reached == Counter({"subject_not_in_corpus": 3, "weak_match": 3, "different_offence": 2})
 
 
 # -- the score refusal, which prints the number it decided on -------------------------

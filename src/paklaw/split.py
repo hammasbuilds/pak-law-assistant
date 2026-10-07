@@ -43,7 +43,7 @@ import difflib
 import re
 from dataclasses import dataclass
 
-from .audit import provision_order
+from .audit import provision_order, sequence_within
 from .citation import normalise_number
 
 # A line that could open a provision: "20.", "302.", "2A.", "489-F.", optionally inside
@@ -399,7 +399,9 @@ def provision_spans(text: str, *, include_repealed: bool = False) -> list[tuple[
 MIN_TAIL_RUN = 3
 
 
-def _tail_run(chain: list[_Candidate], weak: list[_Candidate], text: str = "") -> list[_Candidate]:
+def _tail_run(
+    chain: list[_Candidate], weak: list[_Candidate], text: str
+) -> list[_Candidate]:
     """The unlisted headings that continue the contents, in order.
 
     Only after the chain's last accepted provision, and only while each number is the
@@ -443,14 +445,16 @@ def _tail_run(chain: list[_Candidate], weak: list[_Candidate], text: str = "") -
     if len(run) < MIN_TAIL_RUN:
         return []
 
-    if text:
-        bodies = []
-        for i, candidate in enumerate(run):
-            end = run[i + 1].start if i + 1 < len(run) else len(text)
-            bodies.append(text[candidate.body_start : end].strip())
-        if not any(bodies):
-            # Every one of them is a bare title: a list, not a run of sections.
-            return []
+    # Not conditional on the caller passing the text. `text` used to default to "" and
+    # the whole of this was inside `if text:`, so every unit test of this function ran
+    # the version without the rule and the rule itself was never executed by the suite.
+    bodies = []
+    for i, candidate in enumerate(run):
+        end = run[i + 1].start if i + 1 < len(run) else len(text)
+        bodies.append(text[candidate.body_start : end].strip())
+    if not any(bodies):
+        # Every one of them is a bare title: a list, not a run of sections.
+        return []
     return run
 
 
@@ -537,6 +541,14 @@ def _layout(text: str) -> _Layout:
     return _Layout(toc, toc_order, toc_start, toc_end, candidates, chain, unlisted)
 
 
+def _digit_order(number: str) -> tuple:
+    """A buried candidate's position. `_SWALLOWED` matches `(\\d{1,4}[A-Z]?)`, so this
+    is always digits and an optional letter: `302A` -> `(302, "A")`."""
+    match = re.match(r"(\d+)(.*)", number)
+    assert match, number  # the pattern that produced it cannot match anything else
+    return (int(match.group(1)), match.group(2))
+
+
 def buried_offset(body: str, number: str) -> int:
     """Where `body` stops being this provision and starts being the next one.
 
@@ -547,9 +559,14 @@ def buried_offset(body: str, number: str) -> int:
     # alone could not see s.302A inside s.302, which is how a Pakistani statute is
     # amended - a section inserted between two others takes a letter rather than
     # renumbering the book.
-    last = provision_order(number)
+    #
+    # `sequence_within` and not `provision_order`, which sorts across numbering schemes
+    # by a leading tag: a buried heading is always a digit number, every digit number
+    # is tag 0, and tag 0 is below every Order and every Schedule - so inside those this
+    # comparison was true of every candidate and the loop skipped all of them.
+    last = sequence_within(number)
     for match in _SWALLOWED.finditer(body):
-        if provision_order(match.group(1)) <= last:
+        if last is not None and _digit_order(match.group(1)) <= last:
             continue
         return match.start()
     return len(body)
@@ -572,17 +589,54 @@ def buried_numbers(body: str, number: str) -> list[str]:
     #
     # `provision_order` is what every other comparison in this package uses, and it puts
     # 302A after 302 and before 303, which is what the Act means by it.
-    here = provision_order(number)
     found: list[str] = []
-    last = here
+    # None inside a Schedule or a Preamble: there is no number for a candidate to be
+    # later than, so the ascending-run rule stands on its own.
+    last = sequence_within(number)
     for match in _SWALLOWED.finditer(body):
         candidate = match.group(1)
-        order = provision_order(candidate)
-        if order <= last:
+        order = _digit_order(candidate)
+        if last is not None and order <= last:
             continue
         found.append(candidate)
         last = order
     return found
+
+
+#: Characters that render as punctuation a reader recognises and are not that
+#: punctuation, mapped to what they look like, plus the ones that are not characters at
+#: all. From the Pakistan Code's own text, which is the source this package is for.
+#:
+#:   * `U+037E GREEK QUESTION MARK` stands for a semicolon throughout: PPC s.53 reads
+#:     "Firstly, Qisas \u037e", and so does every item of every enumerated list in it.
+#:     `_SENTENCE` in `audit.py` splits sentences on `[.;:]`, so each of those lists
+#:     was one unsplittable sentence to the diff - the shape that gets a coarse
+#:     comparison instead of a word-by-word one.
+#:   * `U+00AD SOFT HYPHEN` is invisible and sits inside words, so a word carrying one
+#:     is a different word from the one a reader types.
+#:   * `U+2019` and the quotation marks are typography and are LEFT ALONE: they are
+#:     what the statute is written with, and the text is served to a reader.
+_LOOKALIKES = {
+    "\u037e": ";",  # GREEK QUESTION MARK
+    "\u00ad": "",  # SOFT HYPHEN
+    "\u200b": "",  # ZERO WIDTH SPACE
+    "\u2060": "",  # WORD JOINER
+    "\ufeff": "",  # ZERO WIDTH NO-BREAK SPACE, a BOM in the middle of a file
+    "\u00a0": " ",  # NO-BREAK SPACE
+    "\u2212": "-",  # MINUS SIGN
+}
+
+
+def normalise_source(text: str) -> str:
+    """Punctuation lookalikes and invisible characters, from raw statute text.
+
+    Not a general Unicode normalisation: only characters that make the text parse as
+    something other than what it reads as. See `_LOOKALIKES`.
+    """
+    for wrong, right in _LOOKALIKES.items():
+        if wrong in text:
+            text = text.replace(wrong, right)
+    return text
 
 
 def split_act(
@@ -596,6 +650,11 @@ def split_act(
     """Rows for `corpus.build`, and a report of everything that needs a human look."""
     dt.date.fromisoformat(in_force_from)  # fail before doing any work
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Punctuation that renders as punctuation this parser looks for and is not it. The
+    # Pakistan Code writes a semicolon as U+037E GREEK QUESTION MARK throughout, which
+    # `[.;:]` cannot see - so every enumerated provision was one unsplittable sentence
+    # to the version diff. See `normalise_source`.
+    text = normalise_source(text)
     layout = _layout(text)
     toc, toc_order, toc_start, toc_end = (
         layout.toc,

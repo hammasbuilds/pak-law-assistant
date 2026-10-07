@@ -475,6 +475,28 @@ RETRIEVAL QUALITY
 `wrong` is the only column that matters. A refusal costs a reader a lookup; a confident
 citation of the wrong provision costs them the argument.
 
+**And `0` is a property of these 105 questions, not of the system.** Every set above was
+written for this repository, which is the one thing they have in common and the thing a
+number cannot disclose about itself. An independent review wrote its own questions over
+the same corpus and measured something else: of 24 unanswerable questions phrased in the
+corpus's own vocabulary, **16 were answered**; of 38 answerable ones, **27 right, 1
+wrong, 10 refused** - a 26% refusal rate against the 15% here. Nothing in the code
+differed between those two measurements.
+
+Two of those gaps have since been closed and are in the suite - a question whose
+distinctive word the answering provision does not contain is now refused
+(`Hit.missing_key_term`), and a refusal no longer claims a word is absent when the
+corpus holds another form of it. The rest is the honest caveat: a set you wrote is a set
+you can pass.
+
+`tests/test_clause_population.py` is the attempt at a population nobody chose. The rule
+is "the first nine words of each provision's first clause", which generates 31 questions
+over the same corpus: **30 right, 1 wrong, 0 refused**. The one mistake is
+`"in every case in which sentence of imprisonment for"` - the opening of PPC s.55, and
+also of s.60 and s.64, cut before the word that separates them - and s.55 is served
+among the three passages. A generated set has its own bias, which is the generator's;
+what it cannot have is a preference for questions the system answers.
+
 The column was 1 until the ranking learned about **term proximity**: how close together
 a provision says the words of the question, used to separate provisions that cover it
 equally well. Two questions about s.57 PPC - "imprisonment for life shall be reckoned as

@@ -19,7 +19,14 @@ statute's own words was refused for "naming an Act this corpus does not hold: 'B
 **A capitalised phrase read as an instrument.** `Order`, `Rules` and `Regulations` are
 ordinary English, so "can the Provincial Government pass a Commutation Order?" was
 refused for naming an Act called "Commutation Order" - two words, the first of which is
-s.54's own heading.
+s.54's own heading. They are off the refusal pattern now while staying on the parsing
+one, because recognising a name and refusing a question because of one are different
+decisions.
+
+The first fix for the two above was one rule for both: *a name made entirely of words
+this corpus uses is not another country's statute*. That rule is the wrong shape, and it
+opened a hole wider than the two false refusals it closed - see `STILL_FOREIGN`. A
+jurisdiction word is exempt only where the corpus writes it in front of the same noun.
 
 And one that was not false but inconsistent: the guard ran after the citation route, so
 "is an Indian citizen protected by Article 4?" was answered while the same sentence
@@ -74,11 +81,21 @@ def test_no_question_about_a_provision_is_refused_for_an_unreliable_citation(cor
 
 
 def test_the_status_is_only_reachable_when_it_is_true(assistant):
-    """Read as code: the branch returning it is the one that removes a buried hit.
+    """Read as code, and that was the whole problem with it.
 
-    Asserted on the source because the state it needs - a corpus whose provisions run on
-    into each other - is the one the importer now parses correctly, so there is no
-    fixture here that reaches it. `tests/test_split_real.py` covers the detector.
+    This asserted `source.count('refusal_status = "citation_unreliable"') == 1` and
+    that `kept.remove(hit)` appeared before it, having explained that *"the state it
+    needs - a corpus whose provisions run on into each other - is the one the importer
+    now parses correctly, so there is no fixture here that reaches it."*
+
+    Which was true of corpora built by the importer, and the importer is not the only
+    way to build a `Corpus`. `tests/test_buried_provision_answers.py` builds one whose
+    provisions do run on into each other, drives both branches of that fifty-line path,
+    and asserts the status and the warnings a reader actually receives.
+
+    What is left here is the structural claim that test cannot make: that there is one
+    place in the module where this status is set, so the behaviour covered there is the
+    only behaviour there is.
     """
     import inspect
 
@@ -86,11 +103,6 @@ def test_the_status_is_only_reachable_when_it_is_true(assistant):
 
     source = inspect.getsource(module)
     assert source.count('refusal_status = "citation_unreliable"') == 1
-    where = source.index('refusal_status = "citation_unreliable"')
-    preceding = source[:where]
-    # The only path to it runs through the swallowed-provision removal.
-    assert "kept.remove(hit)" in preceding
-    assert preceding.rindex("kept.remove(hit)") < where
 
 
 DEFINITION_QUESTIONS = {
@@ -112,10 +124,9 @@ def test_a_definition_section_answers_the_question_it_defines(assistant, questio
 # -- a name made of this corpus's own words is not another country's statute ----------
 
 CORPUS_LANGUAGE = {
-    # PPC s.49: "reckoned according to the British calendar".
+    # PPC s.49: "reckoned according to the British calendar" - the corpus writes this
+    # jurisdiction word in front of this noun, so the phrase is its own language.
     "is a year reckoned by the British calendar?": "Section 49 PPC",
-    # "Commutation" is s.54's own heading; "Order" is ordinary English.
-    "What is a High Treason Act?": "Article 6 CONST",
 }
 
 STILL_FOREIGN = (
@@ -123,6 +134,23 @@ STILL_FOREIGN = (
     "what is the punishment for murder in India?",
     "what does section 302 of the Indian Penal Code say?",
     "is an Indian citizen protected by Article 4?",
+    # -- the cases the first version of this guard let through -------------------
+    #
+    # The rule was "a name made entirely of words this corpus uses is not another
+    # country's statute", and the corpus is a penal code: it contains `british`,
+    # `law`, `arms`, `food`, `oath` and `treason`. So each of these was ANSWERED,
+    # from Pakistani law, which is the error the guard exists to prevent - and the
+    # entry removed from `CORPUS_LANGUAGE` above asserted one of them as correct.
+    #
+    # Whether a token names a jurisdiction is a fact about the token. Whether a
+    # corpus holds an Act is a fact about the table. Neither is a fact about the
+    # corpus's vocabulary, which is what the old rule asked.
+    "what is the punishment for murder under British law?",
+    "what is the punishment for murder under the Arms Act?",
+    "what does the Food Act say about drink?",
+    "what does the Oath Act require?",
+    "What is a High Treason Act?",
+    "what does the Evidence Act say about a confession?",
 )
 
 
@@ -155,9 +183,21 @@ def test_naming_a_jurisdiction_is_refused_whether_or_not_a_section_is_cited(assi
 
 def test_a_commutation_order_is_not_reported_as_an_unheld_act(assistant):
     """`Order` is ordinary English. Whatever this question gets, the reason must not be
-    that the corpus does not hold an Act called "Commutation Order"."""
+    that the corpus does not hold an Act called "Commutation Order".
+
+    The second assertion used to be `"Commutation Order" not in answer.refusal_reason`
+    on its own, and `refusal_reason` is `""` when a question is answered - so on the
+    day this passes by being answered, it passes while testing nothing. The outcome is
+    pinned first, so the assertion has something to be about either way.
+    """
     answer = assistant.answer(
         "Can the Provincial Government pass a Commutation Order?", as_of="2026-01-01"
     )
     assert answer.refusal_status != "act_not_recognised", answer.refusal_reason
-    assert "Commutation Order" not in answer.refusal_reason
+    # Measured: refused as `subject_not_in_corpus`, because this corpus has no
+    # provision about a Provincial Government passing an order of commutation -
+    # s.54 is the President commuting a sentence of death. Pinned so that the
+    # assertion below is made against a refusal that exists.
+    assert answer.refused, [p.citation for p in answer.passages]
+    assert answer.refusal_reason, "there is no reason to check"
+    assert "Commutation Order" not in answer.refusal_reason, answer.refusal_reason

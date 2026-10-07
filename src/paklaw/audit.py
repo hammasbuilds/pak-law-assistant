@@ -18,6 +18,8 @@ import datetime as dt
 import difflib
 import re
 
+from dataclasses import dataclass
+
 from .citation import (
     Citation,
     is_foreign_report,
@@ -199,68 +201,190 @@ def _check_one(corpus: Corpus, c: Citation, date: dt.date, loaded: set[str]) -> 
 _WORD = re.compile(r"\S+")
 
 
-#: The most words this will compare in ONE passage, after the sentence-level pass
-#: below has cut the text into passages. The word comparison is the expensive one:
-#: measured on alternating matched and unmatched words - what an amending Act produces -
-#: 1,000 words took 7.5s, 2,000 took 59s and 3,000 took 206s, which is cubic, not
-#: quadratic. A passage this big is one sentence of 1,200 words and there is nothing
-#: sensible to do with it but say so.
-#:
-#: `autojunk=False` stays: the heuristic it disables drops any element in more than 1%
-#: of a long sequence, which in a statute is "shall", "the" and "section" - the words a
-#: legal diff has to line up on. Bounding the input it sees is what makes keeping it
-#: affordable.
-MAX_DIFF_WORDS = 1_200
-
-#: Sentence endings, which is how the text is cut before any of that. A provision has
-#: tens of sentences, so matching them is free whatever the words look like.
+#: Sentence endings, which is how the text is cut before any word is compared. A
+#: provision has tens of sentences, so matching them is free whatever the words look
+#: like.
 _SENTENCE = re.compile(r"(?<=[.;:])\s+")
+
+#: The most pairwise word comparisons this will spend on PRECISE diffing across one
+#: whole call. Precise is `autojunk=False`, which keeps every word in play - the
+#: heuristic it disables drops any element in more than 1% of a long sequence, which in
+#: a statute is "shall", "the" and "section", the words a legal diff has to line up on.
+#:
+#: Measured, on word lists, with the shape named because a figure without one cannot be
+#: reproduced:
+#:
+#:      words   alternating same/unique   statute prose, 1 word in 50 changed
+#:        500        1.25s                      0.03s
+#:      1,000        8.67s                      0.24s
+#:      2,000       84.59s                      2.17s
+#:      6,000           -                      58.89s
+#:
+#: Far worse than quadratic, and the cost is in the content rather than the length: the
+#: same 1,000 words are 8.67s or 0.24s depending on how they alternate. So the budget is
+#: in comparisons - the product of the two lengths - and not in words, which is what a
+#: length cap got wrong. 250,000 of them is about 1.3s at the worst shape above.
+#:
+#: ONE budget for the whole call. Per passage it was no bound at all: total work was the
+#: cap times the number of passages.
+MAX_DIFF_WORK = 250_000
+
+#: What a passage over the remaining budget gets instead: `autojunk=True`, which
+#: compares the pathological 100,000-word case in 0.115s. Coarser - it reports a longer
+#: run as one change - and a true statement about what differs, which a refusal to
+#: compare is not. There is no "not compared" outcome.
+COARSE_NOTE = (
+    "compared with the fast heuristic rather than word by word: this passage is "
+    "{a:,} and {b:,} words and the precise comparison is far worse than quadratic. "
+    "Runs of change are reported together rather than individually; nothing here is "
+    "wrong, only coarse. Read both texts with `get_provision` at each date."
+)
 
 #: The most changed passages one diff reports. A reply is a protocol message, and
 #: 1,460,000 characters of corpus text produced 5.8 MB in one of them.
 MAX_DIFF_CHANGES = 500
 
+#: And the same bound in characters, because 500 rows of a 20,000-word passage each is
+#: still megabytes. The row count alone let a 10 MB reply through.
+MAX_DIFF_CHARS = 200_000
+
+#: The most characters of either side of ONE row. A row count cannot bound a reply
+#: whose rows are unbounded, and "all of this was replaced by all of that" is a single
+#: row carrying both texts entire - 4.38 MB of it, measured, on an input of 1.4 MB.
+#: A diff says which words changed, and 2,000 characters of one change is already past
+#: what anyone reads; the row states the full length and `get_provision` serves it.
+MAX_ROW_CHARS = 2_000
+
+#: Every value `word_diff` can put in a row's `change` field. Exported because the MCP
+#: tool's output schema declares this as an enum, and declared it as the three ordinary
+#: ones while this module emitted two more - so the validator that checks every tool's
+#: output on every path could not have passed a bounded diff. The same defect the
+#: refusal statuses had, for the same reason: a list of values written out by hand in
+#: the file that does not define them.
+ALL_CHANGE_KINDS = ("added", "removed", "replaced", "approximate", "truncated")
+
 
 def word_diff(before: str, after: str) -> list[dict]:
     """Changed passages only, with their surrounding words cut away.
 
-    Word-level rather than character-level: "three years" → "five years" is the fact a
-    lawyer needs, and a character diff renders it as "thr" → "fiv".
+    Word-level rather than character-level: "three years" -> "five years" is the fact a
+    lawyer needs, and a character diff renders it as "thr" -> "fiv".
 
-    Bounded on both axes, and each bound reports itself rather than truncating quietly -
-    a diff that stopped early and does not say so is worse than no diff. Over the word
-    budget it returns one row saying the comparison was not made and how big the texts
-    are; over the change budget it returns the changes it found and a row saying how
-    many more there were.
+    Bounded on three axes, and each bound reports itself rather than truncating quietly -
+    a diff that stopped early and does not say so is worse than no diff. Precise
+    comparison draws on one `MAX_DIFF_WORK` budget for the whole call and passages past
+    it are compared coarsely, with a row saying so; the row and character counts stop
+    the reply growing without limit, with a row saying how many changes were not listed.
+
+    Nothing is ever left uncompared.
     """
+    budget = _Work(MAX_DIFF_WORK)
     changes: list[dict] = []
-    for before_part, after_part in _changed_passages(before, after):
-        if len(changes) >= MAX_DIFF_CHANGES:
-            changes.append(
-                {
-                    "change": "truncated",
-                    "before": None,
-                    "after": (
-                        f"more than {MAX_DIFF_CHANGES:,} changed passages; the rest are "
-                        "not listed. These two versions have little text in common."
-                    ),
-                }
-            )
-            break
-        changes.extend(_word_level(before_part, after_part))
+    characters = 0
+    passages = _changed_passages(before, after)
+    for position, (before_part, after_part) in enumerate(passages):
+        if _full(changes, characters):
+            changes.append(_truncated(len(passages) - position))
+            return changes
+        for row in _word_level(before_part, after_part, budget):
+            if _full(changes, characters):
+                changes.append(_truncated(len(passages) - position))
+                return changes
+            row["before"] = _abridge(row["before"])
+            row["after"] = _abridge(row["after"])
+            changes.append(row)
+            characters += len(row["before"] or "") + len(row["after"] or "")
     return changes
 
 
-def _changed_passages(before: str, after: str) -> list[tuple[str, str]]:
-    """(before, after) of each run of sentences that differs. Equal runs are dropped.
+def _full(changes: list[dict], characters: int) -> bool:
+    return len(changes) >= MAX_DIFF_CHANGES or characters >= MAX_DIFF_CHARS
 
-    The cheap half. A provision has tens of sentences, so this comparison costs nothing
-    whatever the words inside them look like - which is the whole point, because the
-    word comparison below is cubic on the text an amending Act produces.
+
+def _truncated(remaining: int) -> dict:
+    return {
+        "change": "truncated",
+        "before": None,
+        "after": (
+            f"{remaining:,} further changed passage(s) are not listed: a diff is capped "
+            f"at {MAX_DIFF_CHANGES:,} changes and {MAX_DIFF_CHARS:,} characters. These "
+            "two versions have little text in common."
+        ),
+    }
+
+
+def _abridge(text: str | None) -> str | None:
+    """One side of one row, cut to `MAX_ROW_CHARS` and saying so if it was cut."""
+    if text is None or len(text) <= MAX_ROW_CHARS:
+        return text
+    return (
+        text[:MAX_ROW_CHARS].rstrip()
+        + f" ... [abridged: {len(text):,} characters in all. Read the full text with "
+        "`get_provision` at each date.]"
+    )
+
+
+@dataclass
+class _Work:
+    """The precise-comparison budget, drawn down across one call.
+
+    A passage asks for what it would cost; it gets precision if the budget covers it and
+    a coarse comparison otherwise. Held in an object rather than returned, because the
+    point is that the passages share it.
     """
-    a = [s for s in _SENTENCE.split(before) if s.strip()]
-    b = [s for s in _SENTENCE.split(after) if s.strip()]
-    out = []
+
+    remaining: int
+
+    def afford(self, cost: int) -> bool:
+        if cost > self.remaining:
+            return False
+        self.remaining -= cost
+        return True
+
+
+#: How much of two sentences must be shared vocabulary before they are treated as the
+#: same sentence amended, rather than two different sentences that happen to sit at the
+#: same index. An amended sentence keeps nearly all of its words ("three years" -> "five
+#: years" is 0.9); the sentences either side of a struck clause share little but "the"
+#: (0.2 in the case that found this). `quick_ratio` counts shared words without
+#: aligning them, which is all this decision needs and is linear.
+_PAIR_RATIO = 0.5
+
+
+def _corresponds(before: str, after: str) -> bool:
+    """Whether these two sentences are one sentence amended."""
+    return (
+        difflib.SequenceMatcher(a=before.split(), b=after.split()).quick_ratio()
+        >= _PAIR_RATIO
+    )
+
+
+#: A run of unchanged sentences is trusted to mark a correspondence between the two
+#: texts only if it carries at least this many words. A statute numbers its clauses, and
+#: `C.` or `(3)` survives a renumbering exactly because it is a numbering - so the
+#: matcher pinned those as equal and lined up the shifted clauses either side of them
+#: against each other, reporting a sentence present in both texts as replaced. One word
+#: is not evidence of anything; a sentence of real text is.
+_ANCHOR_WORDS = 4
+
+
+def _changed_regions(a: list[str], b: list[str]) -> list[tuple[list[str], list[str]]]:
+    """The runs of sentences that differ, as (before, after) lists of sentences.
+
+    Changes separated by nothing but clause numbers are one region: see `_ANCHOR_WORDS`.
+    A substantial unchanged run does split them, which is what keeps the word comparison
+    below working on short inputs.
+    """
+    regions: list[tuple[list[str], list[str]]] = []
+    pending_a: list[str] = []
+    pending_b: list[str] = []
+
+    def flush() -> None:
+        if pending_a or pending_b:
+            regions.append((list(pending_a), list(pending_b)))
+        pending_a.clear()
+        pending_b.clear()
+
     # autojunk ON here, and OFF in `_word_level` below. The two passes want opposite
     # things from it: this one is only locating the regions that differ, so treating a
     # sentence that repeats throughout the text as uninteresting costs nothing and is
@@ -268,45 +392,97 @@ def _changed_passages(before: str, after: str) -> list[tuple[str, str]]:
     # the 1%-popular elements autojunk drops. The fine pass is where accuracy matters
     # and where the input is a passage, so it keeps every word in play.
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b).get_opcodes():
-        if op == "equal":
+        if op != "equal":
+            pending_a.extend(a[i1:i2])
+            pending_b.extend(b[j1:j2])
             continue
-        if op == "replace" and (i2 - i1) == (j2 - j1):
-            # The same number of sentences, some words changed - which is what an
-            # amending Act does. Paired one for one, so each word comparison sees one
-            # sentence instead of the whole changed run: joining the run made a 13,000
-            # character provision of repeated sentences exceed the word budget and come
-            # back "not compared", which is a worse answer than a slow one.
-            out.extend(zip(a[i1:i2], b[j1:j2], strict=True))
+        run = a[i1:i2]
+        if sum(len(sentence.split()) for sentence in run) >= _ANCHOR_WORDS:
+            flush()
+        elif pending_a or pending_b:
+            # Not an anchor, and a change is open: the run belongs to it. It is equal
+            # text on both sides, so the word comparison will report it as equal.
+            pending_a.extend(run)
+            pending_b.extend(run)
+    flush()
+    return regions
+
+
+def _changed_passages(before: str, after: str) -> list[tuple[str, str]]:
+    """(before, after) of each run of sentences that differs. Equal runs are dropped.
+
+    The cheap half. A provision has tens of sentences, so this comparison costs nothing
+    whatever the words inside them look like - which is the whole point, because the
+    word comparison below is far worse than quadratic on the text an amending Act
+    produces.
+    """
+    a = [s for s in _SENTENCE.split(before) if s.strip()]
+    b = [s for s in _SENTENCE.split(after) if s.strip()]
+    out: list[tuple[str, str]] = []
+    for region_a, region_b in _changed_regions(a, b):
+        if (
+            len(region_a) > 1
+            and len(region_a) == len(region_b)
+            and all(_corresponds(x, y) for x, y in zip(region_a, region_b, strict=True))
+        ):
+            # The same number of sentences, each one recognisably the other amended -
+            # which is what an amending Act does. Compared one for one, so each word
+            # comparison sees one sentence instead of the whole region: joining the
+            # region made a 13,000-character provision of repeated sentences exceed
+            # the precise-comparison budget and be diffed coarsely, which is a worse
+            # answer than a slow one.
+            #
+            # `_corresponds`, because equal counts are not correspondence. Striking one
+            # clause and renumbering the rest also produces a region of equal length,
+            # offset by one.
+            out.extend(zip(region_a, region_b, strict=True))
             continue
-        out.append((" ".join(a[i1:i2]), " ".join(b[j1:j2])))
+        out.append((" ".join(region_a), " ".join(region_b)))
     return out
 
 
-def _word_level(before: str, after: str) -> list[dict]:
-    """The word diff of one changed passage, which is short by construction."""
+def _word_level(before: str, after: str, budget: _Work) -> list[dict]:
+    """The word diff of one changed passage.
+
+    Precise if the budget covers it, coarse if not, and never skipped.
+    """
     a, b = _WORD.findall(before), _WORD.findall(after)
-    if max(len(a), len(b)) > MAX_DIFF_WORDS:
-        return [
+
+    # The common prefix and suffix, which are exact, linear and most of an amendment:
+    # "three years" -> "five years" inside a 5,000-word provision leaves a core of two
+    # words, and the comparison below is the one whose cost is super-quadratic in what
+    # it is handed. Stripping them first is the difference between a precise diff and a
+    # coarse one for every realistic amendment.
+    head = 0
+    while head < min(len(a), len(b)) and a[head] == b[head]:
+        head += 1
+    tail = 0
+    while tail < min(len(a), len(b)) - head and a[len(a) - 1 - tail] == b[len(b) - 1 - tail]:
+        tail += 1
+    core_a = a[head : len(a) - tail]
+    core_b = b[head : len(b) - tail]
+    if not core_a and not core_b:
+        return []
+
+    precise = budget.afford(len(core_a) * len(core_b))
+    changes: list[dict] = []
+    if not precise:
+        changes.append(
             {
-                "change": "not compared",
+                "change": "approximate",
                 "before": None,
-                "after": (
-                    f"this passage is {len(a):,} and {len(b):,} words with no sentence "
-                    f"break to cut it at; the word comparison is limited to "
-                    f"{MAX_DIFF_WORDS:,} because it is cubic in the worst case. Read the "
-                    "two texts with `get_provision` at each date."
-                ),
+                "after": COARSE_NOTE.format(a=len(core_a), b=len(core_b)),
             }
-        ]
-    changes = []
-    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+        )
+    matcher = difflib.SequenceMatcher(a=core_a, b=core_b, autojunk=not precise)
+    for op, i1, i2, j1, j2 in matcher.get_opcodes():
         if op == "equal":
             continue
         changes.append(
             {
                 "change": {"replace": "replaced", "delete": "removed", "insert": "added"}[op],
-                "before": " ".join(a[i1:i2]) or None,
-                "after": " ".join(b[j1:j2]) or None,
+                "before": " ".join(core_a[i1:i2]) or None,
+                "after": " ".join(core_b[j1:j2]) or None,
             }
         )
     return changes
@@ -407,6 +583,32 @@ def provision_order(number: str) -> tuple:
     if match:
         return (1, _roman(match.group(1)), int(match.group(2)))
     return (2, 0, number)
+
+
+def sequence_within(number: str) -> tuple | None:
+    """The host's own position in the numbering that a buried heading would continue.
+
+    `provision_order` exists to SORT unlike numbers, so it tags them by scheme and a
+    section always sorts before an Order. That tag is meaningless as a comparison, and
+    two detectors in `split.py` were using it as one: a buried heading is always a
+    digit-and-letter number, every one of those is tag 0, and tag 0 is below everything,
+    so inside a provision numbered `IX/3` or `Schedule` every candidate was skipped and
+    the safeguard was blind.
+
+    What they need is the number a buried `4.` would be later than:
+
+      * `302A` -> `(302, "A")`. A section's own number.
+      * `IX/3` -> `(3, "")`. Order IX rule 3: the next rule is rule 4, and the Roman
+        numeral is which Order, not which rule.
+      * `Schedule` -> None. Nothing to be later than, so the ascending-run rule stands
+        on its own - any run of increasing numbers each followed by a capitalised title.
+    """
+    order = provision_order(number)
+    if order[0] == 0:
+        return (order[1], order[2])
+    if order[0] == 1:
+        return (order[2], "")
+    return None
 
 
 def contents(corpus: Corpus, statute: str, *, as_of: str | dt.date) -> dict:

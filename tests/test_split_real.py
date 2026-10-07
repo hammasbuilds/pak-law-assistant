@@ -405,7 +405,7 @@ def test_two_consecutive_weak_headings_are_not_enough():
     from paklaw.split import _tail_run
 
     chain = [_candidate("57", 0)]
-    assert _tail_run(chain, [_candidate("58", 100), _candidate("59", 200)]) == []
+    assert _tail_run(chain, [_candidate("58", 100), _candidate("59", 200)], "x" * 4000) == []
 
 
 def test_three_consecutive_weak_headings_are_a_contents_list_that_stopped():
@@ -413,7 +413,7 @@ def test_three_consecutive_weak_headings_are_a_contents_list_that_stopped():
 
     chain = [_candidate("57", 0)]
     weak = [_candidate("58", 100), _candidate("59", 200), _candidate("60", 300)]
-    assert [c.number for c in _tail_run(chain, weak)] == ["58", "59", "60"]
+    assert [c.number for c in _tail_run(chain, weak, "x" * 4000)] == ["58", "59", "60"]
 
 
 def test_a_gap_ends_the_run():
@@ -428,7 +428,7 @@ def test_a_gap_ends_the_run():
         _candidate("60", 300),
         _candidate("64", 400),
     ]
-    assert [c.number for c in _tail_run(chain, weak)] == ["58", "59", "60"]
+    assert [c.number for c in _tail_run(chain, weak, "x" * 4000)] == ["58", "59", "60"]
 
 
 def test_the_run_only_looks_after_the_last_accepted_provision():
@@ -438,15 +438,15 @@ def test_the_run_only_looks_after_the_last_accepted_provision():
 
     chain = [_candidate("57", 500)]
     weak = [_candidate("58", 100), _candidate("59", 200), _candidate("60", 300)]
-    assert _tail_run(chain, weak) == []
+    assert _tail_run(chain, weak, "x" * 4000) == []
 
 
 def test_nothing_to_continue_is_not_a_run():
     """A sweep over an empty list passes, so both empty cases are stated."""
     from paklaw.split import _tail_run
 
-    assert _tail_run([], [_candidate("58", 100)]) == []
-    assert _tail_run([_candidate("57", 0)], []) == []
+    assert _tail_run([], [_candidate("58", 100)], "x" * 4000) == []
+    assert _tail_run([_candidate("57", 0)], [], "x" * 4000) == []
 
 
 def test_three_consecutive_unlisted_headings_continue_the_contents():
@@ -485,3 +485,66 @@ def test_the_other_two_fixtures_are_unchanged_by_the_rule():
     rows, report = split_act(text, statute="PPC", in_force_from="2016-01-01")
     assert [r["number"] for r in rows] == ["300", "301", "302", "303"]
     assert report["swallowed_headings"] == []
+
+
+# -- the rule that separates a contents list from a numbered list ---------------------
+#
+# A default argument of "" turned this rule off, and every unit test above took the
+# default, so the rule shipped with no test executing it and these are the first.
+
+
+def test_a_run_of_bare_titles_is_a_list_and_not_a_run_of_sections():
+    """The shape that found it, inside the last listed section's own text:
+
+        3. Remedies. The court may award the following, in this order:
+        4. Compensation for loss actually suffered.
+        5. Costs of the proceedings.
+        6. Interest from the date of the decree.
+
+    4, 5 and 6 are clauses of s.3. Parsed as sections they truncated s.3 at the colon,
+    dropped three substantive clauses, and were reported as omitted sections "(0
+    characters)" - which is the discriminator, because a genuinely omitted section
+    carries the note that says so and has a body.
+    """
+    from paklaw.split import _tail_run
+
+    # Offsets chosen so each candidate's body runs up to the next candidate's start,
+    # and every one of those spans is whitespace: a title and then immediately the
+    # next title.
+    text = " " * 400
+    chain = [_candidate("3", 0)]
+    weak = [_candidate("4", 100), _candidate("5", 200), _candidate("6", 300)]
+    assert _tail_run(chain, weak, text) == []
+
+
+def test_a_run_whose_members_have_bodies_is_a_run_of_sections():
+    """The other direction, or the rule above is refusing every tail run rather than
+    discriminating between the two shapes."""
+    from paklaw.split import _tail_run
+
+    text = "x" * 400
+    chain = [_candidate("3", 0)]
+    weak = [_candidate("4", 100), _candidate("5", 200), _candidate("6", 300)]
+    assert [c.number for c in _tail_run(chain, weak, text)] == ["4", "5", "6"]
+
+
+def test_one_member_with_a_body_is_enough():
+    """`any`, not `all`: the last section of an excerpt is often the one that got cut
+    off, and a run where some members have text is a run of sections."""
+    from paklaw.split import _tail_run
+
+    text = " " * 250 + "x" * 150
+    chain = [_candidate("3", 0)]
+    weak = [_candidate("4", 100), _candidate("5", 200), _candidate("6", 300)]
+    assert [c.number for c in _tail_run(chain, weak, text)] == ["4", "5", "6"]
+
+
+def test_the_text_is_not_optional():
+    """It used to default to "", which turned the rule above off for every caller that
+    forgot it - and every test in this file forgot it."""
+    import inspect
+
+    from paklaw.split import _tail_run
+
+    text = inspect.signature(_tail_run).parameters["text"]
+    assert text.default is inspect.Parameter.empty

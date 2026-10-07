@@ -52,7 +52,14 @@ from typing import Any, BinaryIO
 
 from . import __version__
 from .answer import Answer, LawAssistant
-from .audit import ALL_STATUSES, changes_between, check_citations, compare_versions, contents
+from .audit import (
+    ALL_CHANGE_KINDS,
+    ALL_STATUSES,
+    changes_between,
+    check_citations,
+    compare_versions,
+    contents,
+)
 from .citation import CANONICAL_STATUTES, normalise_statute, parse, statute_aliases
 from .corpus import Corpus, CorpusError
 from .ingest import build_checked, read_corpus
@@ -494,7 +501,7 @@ TOOLS: list[dict[str, Any]] = [
                 "items": {
                     "type": "object",
                     "properties": {
-                        "change": {"type": "string", "enum": ["added", "removed", "replaced"]},
+                        "change": {"type": "string", "enum": list(ALL_CHANGE_KINDS)},
                         "before": {"type": ["string", "null"]},
                         "after": {"type": ["string", "null"]},
                     },

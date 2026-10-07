@@ -168,9 +168,10 @@ class LawAssistant:
     # Ranking parameters, forwarded to the index. Here so a sweep can reach them
     # without editing the source, which is how one sweep came to measure nothing.
     tuning: dict = field(default_factory=dict)
-    #: Every word the corpus's own text uses, built once. The guard against another
-    #: country's statute asks whether a name is made of these.
-    _words: set[str] | None = field(default=None, repr=False)
+    #: Every adjacent word pair the corpus's own text uses, built once. The guard
+    #: against another country's statute asks whether a jurisdiction word appears here
+    #: in front of the word it qualifies.
+    _pairs: set[tuple[str, str]] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.search is None:
@@ -268,31 +269,29 @@ class LawAssistant:
                 result.warnings.append(note)
         return result
 
-    def _corpus_words(self) -> set[str]:
-        """Every word this corpus's own text and headings use, lowercased.
+    def _corpus_phrases(self) -> set[tuple[str, str]]:
+        """Every adjacent pair of words this corpus's own text and headings use.
 
-        The guard against another country's statute asks whether a name is made of
-        words this corpus uses - PPC s.49 says "reckoned according to the British
-        calendar", so "British" is this book's own language and not evidence of English
-        law. Built from the index's stem set, which already exists for exactly the
-        question "is this word in the corpus at all".
+        The guard against another country's statute asks whether a jurisdiction word
+        appears here in front of the word it qualifies: PPC s.49 says "reckoned
+        according to the British calendar", so `("british", "calendar")` is this book's
+        own language and the question is about a provision it holds.
+
+        A pair and not a word set. The set asked "does the corpus contain this word",
+        and a penal code contains `british`, `law`, `arms` and `food` - so every unheld
+        Act and every jurisdiction built out of ordinary legal English walked straight
+        through the guard and was answered from Pakistani law.
         """
-        if self._words is None:
-            from .retrieve import _stems, tokenise
+        if self._pairs is None:
+            from .retrieve import tokenise
 
-            words: set[str] = set()
+            pairs: set[tuple[str, str]] = set()
             for provision in self.corpus.provisions:
-                for word in tokenise(provision.text, keep_stopwords=True) + tokenise(
-                    provision.heading, keep_stopwords=True
-                ):
-                    # The word AND its stems, because the corpus writes "commutation"
-                    # in a heading and a question writes "Commutation Order". The
-                    # index's own stem set holds stems only, which left the full word
-                    # unrecognised and refused a phrase built from s.54's own heading.
-                    words.add(word)
-                    words.update(_stems(word))
-            self._words = words
-        return self._words
+                for field_text in (provision.heading, provision.text):
+                    words = tokenise(field_text, keep_stopwords=True)
+                    pairs.update(zip(words, words[1:]))
+            self._pairs = pairs
+        return self._pairs
 
     def _answer(
         self,
@@ -324,7 +323,7 @@ class LawAssistant:
         # s.302 PPC. Same words, same question, and the wrong country's criminal law.
         if statute is None:
             foreign = names_unloaded_act(
-                question, extra=self.aliases, corpus_words=self._corpus_words()
+                question, extra=self.aliases, corpus_phrases=self._corpus_phrases()
             )
             if foreign is not None:
                 result.refused = True
@@ -520,6 +519,24 @@ class LawAssistant:
                 f"here. The nearest is {top.provision.citation().pretty()}. If one of "
                 "those words is what the question is about, this corpus does not hold it; "
                 "if it is incidental, rephrase in the statute's own words."
+            )
+            return result
+
+        # The most distinctive word of the question, absent from the provision and
+        # present in the corpus. See `Hit.missing_key_term`: a weighted SHARE can be
+        # cleared while the subject of the question is the part that is missing, and
+        # "what fine is payable for qatl-i-amd as qisas?" cleared it at 0.544 with
+        # `fine` and `payable` missing - answered from s.302, which prescribes no fine.
+        if hits[0].missing_key_term:
+            top = hits[0]
+            term = top.missing_key_term
+            result.refused = True
+            result.refusal_status = "weak_match"
+            result.refusal_reason = (
+                f"{REFUSAL_WEAK}: the question turns on {term!r}, which this corpus "
+                f"holds but {top.provision.citation().pretty()} - the nearest provision "
+                "on the rest of the question - does not contain. A provision about the "
+                "rest of the question is not an answer about that."
             )
             return result
 

@@ -727,48 +727,56 @@ def names_unloaded_act(
     text: str,
     *,
     extra: dict[str, str] | None = None,
-    corpus_words: Container[str] | None = None,
+    corpus_phrases: Container[tuple[str, str]] | None = None,
 ) -> str | None:
     """An Act or jurisdiction in `text` that this corpus does not answer for.
 
     Returns the words that named it, or None.
 
-    Two shapes. A full capitalised Act title - "Indian Penal Code", "Companies Act" -
-    that resolves to no loaded statute; `_ACT_TITLE` already recognises these and
-    `parse` already refuses citations that carry one, so the only thing missing was for
-    the prose route to ask. And a jurisdiction named without any title at all, which is
-    how the question is usually put: "what is the punishment for murder in India?".
+    Two shapes, and they are not the same question.
 
-    `corpus_words` is every word the corpus's own text uses, and a name made entirely of
-    those is not evidence of another country's statute. Without it this refused:
+    A full capitalised Act title - "Indian Penal Code", "Companies Act" - that resolves
+    to no loaded statute. `_REFUSABLE_TITLE` recognises these and `parse` already
+    refuses citations that carry one; the only thing missing was for the prose route to
+    ask. No corpus exemption: an unheld Act is unheld whatever words it shares with the
+    text, and `Order`, `Rules` and `Regulations` are off this pattern already, which is
+    what the ordinary-English cases needed.
 
-      * "is a year reckoned by the **British** calendar?" - PPC s.49 reads "reckoned
-        according to the British calendar", so the corpus holds both the word and the
-        subject, and the refusal called an adjective an Act;
-      * "can the Provincial Government pass a **Commutation Order**?" - a capitalised
-        phrase ending in "Order", built out of s.54's own heading, which `_ACT_TITLE`
-        cannot tell from "Companies Act".
+    And a jurisdiction named without any title, which is how the question is usually
+    put: "what is the punishment for murder in India?".
 
-    The corpus is the authority on what it holds and was never asked. Passing nothing
-    keeps the old behaviour, which is what the citation parser wants: a CITATION naming
-    the Indian Penal Code is refused whatever words the corpus shares with it.
+    `corpus_phrases` is every adjacent word pair the corpus's own text uses, and a
+    jurisdiction word is exempt where the corpus itself writes that word in front of
+    the word it qualifies. PPC s.49 reads "reckoned according to the British calendar",
+    so `("british", "calendar")` is this book's own language and the question is about a
+    provision it holds.
+
+    The pair, not the words. Asking whether the corpus merely CONTAINS the words
+    answered a different question and gave the guard away: a penal code contains
+    `british`, `law`, `arms`, `food` and `oath`, so "murder under British law" and
+    "the Arms Act" came back with s.302 PPC - another country's criminal law served out
+    of Pakistan's, which is the error this function exists to prevent. Whether a token
+    names a jurisdiction is a fact about the token, not about the corpus's vocabulary.
+
+    Passing nothing refuses every jurisdiction word, which is what the citation parser
+    wants: a CITATION naming the Indian Penal Code is refused outright.
     """
     table = {**STATUTES, **(extra or {})}
-    known = corpus_words if corpus_words is not None else ()
-
-    def is_corpus_language(phrase: str) -> bool:
-        words = [w for w in re.findall(r"[\w']+", phrase.lower()) if len(w) > 2]
-        return bool(words) and all(w in known for w in words)
+    phrases = corpus_phrases if corpus_phrases is not None else ()
 
     for match in re.finditer(_REFUSABLE_TITLE, text):
         title = re.sub(r"\s+", " ", match.group(0).strip()).lower()
         title = re.sub(r"^the\s+", "", title)
         if title in table:
             continue
-        if is_corpus_language(title):
-            continue
         return match.group(0).strip()
-    found = _FOREIGN_WORD.search(text)
-    if found is None:
-        return None
-    return None if is_corpus_language(found.group(0)) else found.group(0)
+
+    for found in _FOREIGN_WORD.finditer(text):
+        word = found.group(0).lower()
+        # The word the jurisdiction qualifies, if any. `\w` and not the tokeniser
+        # because this is the raw question and the next token may carry punctuation.
+        after = re.match(r"[^\w]*([\w']+)", text[found.end() :])
+        if after is not None and (word, after.group(1).lower()) in phrases:
+            continue
+        return found.group(0)
+    return None
