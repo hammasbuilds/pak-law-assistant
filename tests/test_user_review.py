@@ -210,6 +210,22 @@ def test_registry_manifest_matches_the_package():
     assert re.search(r"mcp-name: " + re.escape(manifest["name"]) + r"(\s|-->)", readme)
 
 
+def test_the_readme_states_the_publication_order():
+    """`server.json` declares a PyPI package at a version, which is what the registry
+    needs and is not a statement that the upload has happened.
+
+    An independent review flagged the contradiction: the manifest says
+    `registryType: "pypi"` at 0.2.0 while the README says `uvx pak-law-assistant`
+    works "once released". Both are true, and the hazard is the order - a manifest
+    submitted to the registry before the upload makes every client fail at `uvx`.
+    Nothing in this repository can check whether the upload has happened, so what is
+    checkable is that the order is written down.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "Upload to PyPI first, then submit" in readme
+    assert "is **not** a statement that the upload has happened" in readme
+
+
 def test_package_version_matches_the_library():
     from paklaw import __version__
 

@@ -770,3 +770,59 @@ def test_the_protocol_channel_was_never_the_problem_and_still_is_not():
     # The em dash survives the pipe on a console that cannot represent it, because
     # the protocol never goes through the console's codec.
     assert "\u2014" in json.dumps(replies[1], ensure_ascii=False)
+
+
+# -- every runnable file survives the console it will be run on ---------------------
+
+
+#: The console encodings a reader plausibly has. cp437 is the default code page on a
+#: US Windows install and cp850 in parts of Europe, so these are not exotic.
+CONSOLES = ("utf-8", "cp1252", "cp437", "cp850", "ascii:strict")
+
+#: Everything in this repository a reader is told to run.
+RUNNABLE = ("demo.py", "demo_mcp.py", "tests/bench.py")
+
+
+@pytest.mark.parametrize("script", RUNNABLE)
+@pytest.mark.parametrize("encoding", CONSOLES)
+def test_the_runnable_scripts_do_not_die_on_the_console(script, encoding):
+    """`demo_mcp.py` exited 1 on cp437 with `UnicodeEncodeError: 'charmap' codec can't
+    encode character '\u2014'`.
+
+    The em dash comes from the server's own refusal prose. `mcp_server.main` had
+    already been fixed for exactly this - it reconfigures both text streams - and the
+    README's showcase MCP demo was left out of that fix, which is the shape of the
+    problem rather than a second instance of it: a per-entry-point remedy applied per
+    entry point.
+
+    All three scripts, all five encodings, because the one that survived did so
+    through which strings it happened to print.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    done = subprocess.run(
+        [sys.executable, script],
+        cwd=str(root),
+        capture_output=True,
+        timeout=900,
+        env={**os.environ, "PYTHONIOENCODING": encoding},
+    )
+    assert done.returncode == 0, (
+        script,
+        encoding,
+        done.stderr.decode("utf-8", "replace")[-400:],
+    )
+    # And it printed its report rather than dying quietly after a partial one.
+    assert len(done.stdout) > 200, (script, encoding, len(done.stdout))
+
+
+@pytest.mark.parametrize("script", RUNNABLE)
+def test_every_runnable_script_exists(script):
+    """A sweep over a renamed file passes."""
+    from pathlib import Path
+
+    assert (Path(__file__).resolve().parents[1] / script).is_file(), script

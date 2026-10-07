@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -727,11 +728,8 @@ def test_a_refusal_carries_the_token_its_schema_tells_clients_to_branch_on():
         server.provision_history({"citation": "hello"})
 
 
-def test_every_declared_refusal_status_is_one_the_code_can_produce():
-    """An enum listing statuses nothing emits is as misleading as a missing one."""
-    import paklaw.answer as answer_module
-
-    declared = {
+def _declared_statuses() -> set[str]:
+    return {
         value
         for tool in TOOLS
         for field, schema in (tool.get("outputSchema") or {}).get("properties", {}).items()
@@ -739,13 +737,91 @@ def test_every_declared_refusal_status_is_one_the_code_can_produce():
         for value in schema["enum"]
         if value is not None
     }
-    source = Path(answer_module.__file__).read_text(encoding="utf-8")
-    source += Path(Path(answer_module.__file__).parent / "audit.py").read_text(encoding="utf-8")
-    source += Path(Path(answer_module.__file__).parent / "mcp_server.py").read_text(
-        encoding="utf-8"
+
+
+#: Questions chosen to reach a refusal condition each, against the shipped sample
+#: corpus. Not a benchmark - a reachability check. The status each is expected to
+#: produce is written beside it so a question that stops reaching its condition fails
+#: here rather than silently covering a different one.
+#: These three are what the three-provision sample corpus can reach. A date before
+#: the whole corpus gives `nothing_matched` rather than `no_provision_in_force` -
+#: there is no index to search at all - so that condition needs a corpus shaped for
+#: it and lives in `test_retrieval_quality.py`. Written down rather than left as a
+#: gap, because a reachability check that quietly covers two of nine is the shape of
+#: the test this replaced.
+REACHES = {
+    "nothing_matched": ("zzzz qqqq xxxx", "2026-01-01"),
+    "subject_not_in_corpus": ("what is the punishment for dacoity?", "2026-01-01"),
+    # At DEFAULT thresholds, which is the gap finding #7 named: the only test for
+    # `weak_match` set `min_score=1000.0`, proving the knob exists rather than that
+    # the gate fires. Asked about PECA s.20 on a date two years before it was enacted,
+    # where the question's words are in the corpus and nothing in force matches them.
+    "weak_match": ("penalty for publicly transmitting false information", "2000-01-01"),
+}
+
+
+def test_every_declared_refusal_status_is_one_the_code_can_produce():
+    """This could not fail, and did not.
+
+    It concatenated `answer.py`, `audit.py` and `mcp_server.py` and asserted each
+    declared status appears as a quoted string in that text - but the enum is declared
+    in `mcp_server.py`, which is part of the text, so every value matched itself.
+    Adding `"totally_invented_status"` to the enum kept it green. Its docstring said
+    "An enum listing statuses nothing emits is as misleading as a missing one", which
+    is exactly right and exactly what it was not checking.
+
+    Two checks now, neither of which can be satisfied by the declaration:
+
+      * every status the LIBRARY defines is declared - read from `answer.py` and
+        `audit.py` only, so a fabricated enum entry has nothing to match;
+      * every status in `REACHES` is produced by running the question beside it.
+
+    `REACHES` is not all nine. The conditions it does not cover need a corpus shaped
+    to trip them, and `test_retrieval_quality.py` and `test_regressions.py` are where
+    those live; what this file is for is the enum the protocol publishes.
+    """
+    import paklaw.answer as answer_module
+
+    declared = _declared_statuses()
+    assert declared, "the tools no longer declare a refusal_status enum"
+
+    library = Path(answer_module.__file__).read_text(encoding="utf-8")
+    library += Path(Path(answer_module.__file__).parent / "audit.py").read_text(encoding="utf-8")
+    undeclared = sorted(
+        status
+        for status in re.findall(r'refusal_status=["\']([a-z_]+)["\']', library)
+        if status not in declared
     )
-    missing = sorted(status for status in declared if f'"{status}"' not in source)
-    assert missing == [], missing
+    assert undeclared == [], f"the library emits {undeclared} and the enum omits them"
+
+    missing = sorted(status for status in declared if f'"{status}"' not in library)
+    assert missing == [], f"declared and defined nowhere in the library: {missing}"
+
+
+@pytest.mark.parametrize("status", sorted(REACHES))
+def test_the_status_is_actually_produced_by_asking_something(status):
+    """A status the enum publishes and nothing emits is a branch a client writes for
+    and never sees. Reached by asking, not by grepping."""
+    question, as_of = REACHES[status]
+    replies = run(
+        [
+            init(),
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "answer_question",
+                    "arguments": {"question": question, "as_of": as_of},
+                },
+            },
+        ]
+    )
+    result = replies[-1]["result"]
+    structured = result.get("structuredContent") or json.loads(result["content"][0]["text"])
+    assert structured["refused"] is True, (question, structured)
+    assert structured["refusal_status"] == status, (question, structured["refusal_status"])
+    assert status in _declared_statuses(), status
 
 
 def test_compare_versions_does_not_say_both_when_it_means_either():

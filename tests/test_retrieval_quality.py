@@ -716,6 +716,38 @@ FRESH: list[tuple[str, str]] = [
 
 #: Subjects this corpus does not hold, written at the same time. Six are offences in the
 #: Penal Code that are simply not loaded; four are other bodies of law entirely.
+#: Unanswerable questions built from words the corpus DOES hold.
+#:
+#: The three sets below it are all built the other way: each names a subject whose word
+#: the corpus has never seen - "dacoity", "blasphemy", "sedition" - so every one of
+#: them is refused by the vocabulary check, and an independent review counted all 26
+#: landing on `subject_not_in_corpus`. That is one gate tested 26 times, and it is not
+#: the hard case.
+#:
+#: The hard case is a question whose every word is in the statute book and which no
+#: provision answers, because that is where a count-based relevance gate answers
+#: wrongly: "who may grant pardon in a case of qatl-i-amd?" matched `qatl`, `amd` and
+#: `case` - 3 of 5 content words - and returned s.302 PPC, while s.55A, "the right of
+#: the President to grant pardons", sat unreturned in the same corpus. The gate is
+#: IDF-weighted now and it refuses.
+#:
+#: These eight reach three different conditions between them, which is the point:
+#: `weak_match` for a question the corpus's words cannot answer, `different_offence`
+#: for one naming a neighbouring crime, `subject_not_in_corpus` where one word really
+#: is absent. The status each produces is asserted, so a question that stops reaching
+#: its condition fails rather than silently covering another.
+IN_VOCABULARY_MUST_REFUSE: dict[str, str] = {
+    "who may grant pardon in a case of qatl-i-amd?": "weak_match",
+    "is qatl-i-amd a definition of animal?": "weak_match",
+    "what is the tazir for qatl-i-khata?": "different_offence",
+    "may a Court of Session pass a sentence of death for qatl-i-khata?": "different_offence",
+    "may the President remit a sentence of imprisonment for life?": "subject_not_in_corpus",
+    "what fine is payable for qatl-i-amd as qisas?": "subject_not_in_corpus",
+    "does the State grant equal protection to a vessel?": "subject_not_in_corpus",
+    "what punishment does the Constitution prescribe for discrimination?": "subject_not_in_corpus",
+}
+
+
 FRESH_MUST_REFUSE: list[str] = [
     "what is the punishment for forgery?",
     "what is the sentence for cheating?",
@@ -801,10 +833,10 @@ def test_the_readme_quotes_the_totals_these_sets_actually_produce(assistant):
 
     held = sum(
         1
-        for question in MUST_REFUSE + FRESH_MUST_REFUSE
+        for question in MUST_REFUSE + FRESH_MUST_REFUSE + list(IN_VOCABULARY_MUST_REFUSE)
         if assistant.answer(question, as_of="2026-01-01").refused
     )
-    assert held == len(MUST_REFUSE) + len(FRESH_MUST_REFUSE)
+    assert held == len(MUST_REFUSE) + len(FRESH_MUST_REFUSE) + len(IN_VOCABULARY_MUST_REFUSE)
 
 
 def test_the_three_question_sets_are_the_sizes_the_readme_describes():
@@ -919,7 +951,11 @@ def test_the_readme_table_is_the_one_the_bench_prints():
         if line.strip() and not line.startswith("  WRONG") and "expected" not in line
     ]
     # Everything up to and including the summary line; the prose after it is commentary.
-    end = next(i for i, ln in enumerate(table) if ln.strip().startswith("97 questions"))
+    # Matched by shape, not by the number. This read "97 questions" and broke when a
+    # fourth must-refuse set took the total to 105 - a test pinned to the figure it is
+    # checking, which fails on the commit that changes the figure legitimately and
+    # tells you nothing about whether the README was updated.
+    end = next(i for i, ln in enumerate(table) if "questions asked" in ln)
     table = table[: end + 1]
 
     readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
@@ -1009,3 +1045,37 @@ def test_the_readme_table_is_the_one_this_prints():
 
     # And the prose does name it, which is the part a reader relies on.
     assert "s.55A rather than s.54" in readme
+
+
+# -- the hard refusals: every word present, no provision answering -------------------
+
+
+@pytest.mark.parametrize("question", sorted(IN_VOCABULARY_MUST_REFUSE))
+def test_a_question_the_corpus_cannot_answer_in_its_own_words_is_refused(assistant, question):
+    """The case the other 26 do not reach.
+
+    Each of those names a subject the corpus has never seen, so all of them are turned
+    away by the vocabulary check - one gate, 26 times. These eight are built from the
+    statute book's own words, which is where an unweighted relevance gate answered
+    wrongly: 3 of 5 content words matched on `qatl`, `amd` and `case` cleared a 0.5
+    bar and returned s.302 PPC for a question about the power to grant pardons.
+    """
+    answer = assistant.answer(question, as_of="2026-01-01")
+    assert answer.refused, [p.citation for p in answer.passages]
+    assert answer.refusal_status == IN_VOCABULARY_MUST_REFUSE[question], (
+        question,
+        answer.refusal_status,
+    )
+
+
+def test_the_hard_refusals_reach_more_than_one_condition():
+    """A set that trips one gate eight times measures that gate, not the refusals.
+
+    Counted here rather than assumed, because that is precisely what was wrong with
+    the 26: the review's measurement of them was "all 26 -> subject_not_in_corpus".
+    """
+    from collections import Counter
+
+    reached = Counter(IN_VOCABULARY_MUST_REFUSE.values())
+    assert len(reached) >= 3, reached
+    assert max(reached.values()) <= len(IN_VOCABULARY_MUST_REFUSE) - 3, reached

@@ -35,7 +35,27 @@ CALLS = [
 ]
 
 
+def _printable() -> None:
+    """Make stdout and stderr able to carry the text these demos print.
+
+    Windows defaults the console to the ANSI code page - cp437 on a US install, cp850
+    in parts of Europe - and the server's refusal prose contains an em dash. So this
+    demo exited 1 with `UnicodeEncodeError: 'charmap' codec can't encode character
+    '\u2014'` on the default console of the platform it was written on, while
+    `--check` and the protocol channel had both been fixed for exactly this.
+
+    `errors="replace"` rather than a different encoding: the point of a demo is to
+    run, and a replacement glyph in one dash is a better outcome than no output.
+    """
+    import contextlib
+
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(AttributeError, OSError, ValueError):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> None:
+    _printable()
     server = subprocess.Popen(
         [sys.executable, "-m", "paklaw.mcp_server"],
         stdin=subprocess.PIPE,

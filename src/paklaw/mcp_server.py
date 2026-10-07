@@ -10,7 +10,7 @@ way a client does.
 
 What it exposes is the library's behaviour, not a looser version of it:
 
-  **answer_question**    cite a provision in force on a date, or refuse — the four
+  **answer_question**    cite a provision in force on a date, or refuse — the nine
                          refusal conditions come through as answers, not errors
   **check_citations**    every citation in a draft, checked against the law on a date
   **provision_history**  the amendment trail of a named provision
@@ -924,8 +924,14 @@ class LawServer:
         }
         if statute and statute not in self.loaded:
             result["warnings"].append(f"{statute} is not in this corpus")
-        cited = sorted({p.statute for p in answer.passages}) or ([statute] if statute else None)
-        result["warnings"].extend(self.corpus.coverage_warnings(as_of, cited))
+        # `LawAssistant.answer` attaches the coverage warnings for the statutes it
+        # cited, so this adds only the case the library cannot see: a question scoped
+        # to a statute that returned nothing, where the statute named is still the one
+        # the reader wants coverage told about.
+        if statute and not answer.passages:
+            for note in self.corpus.coverage_warnings(as_of, [statute]):
+                if note not in result["warnings"]:
+                    result["warnings"].append(note)
         return self._with_corpus_note(result)
 
     def check_citations(self, arguments: dict) -> dict:

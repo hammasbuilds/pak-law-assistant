@@ -335,6 +335,15 @@ package also installs a `pak-law-assistant` command for exactly this), which is 
 registry clients run it; `server.json` is its
 [MCP Registry](https://registry.modelcontextprotocol.io) manifest.
 
+`server.json` declares `registryType: "pypi"` at the package's current version, which
+is what the registry needs and is **not** a statement that the upload has happened. The
+order matters: submitted to the registry before the PyPI release, every client that
+installs from it fails at `uvx pak-law-assistant`. **Upload to PyPI first, then submit
+the manifest.** `test_registry_manifest_matches_the_package` keeps the declared version
+equal to `pyproject.toml` and `paklaw.__version__`, so the manifest cannot drift ahead
+of the package it names - but nothing in this repository can tell you whether the upload
+has been done, which is why the order is written here.
+
 | Setting | |
 |---|---|
 | `PAKLAW_CORPUS` | path to the corpus file. The only configuration there is |
@@ -437,7 +446,7 @@ CI badge are the record. What the suite covers:
 | the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included. Also the handshake: `structuredContent` and `outputSchema` arrived in protocol 2025-06-18, so a call before `initialize` used to be answered in the degraded 2024 shape rather than refused - a client that skipped the handshake got a worse answer and no way to tell why. It is now a -32002, and the test that found it compares the two shapes |
 | corpus building | the importer against real statute layouts from two public sources |
 | record coverage | what the corpus does and does not claim to know |
-| retrieval quality | **three question sets over 26 real provisions, written at three different times**, and 26 subjects the corpus does not hold. `python tests/bench.py` prints the table (below), so the figures here have a producer rather than being asserted as floors in a test and written out by hand. The later sets exist because a benchmark of 17 sentences is a claim about 17 sentences: an independent review re-asked the same corpus in its own words and got 8 confident wrong answers |
+| retrieval quality | **three question sets over 26 real provisions, written at three different times**, 26 subjects the corpus does not hold, and 8 questions built from the corpus's own words that it still cannot answer. `python tests/bench.py` prints the table (below), so the figures here have a producer rather than being asserted as floors in a test and written out by hand. The later sets exist because a benchmark of 17 sentences is a claim about 17 sentences: an independent review re-asked the same corpus in its own words and got 8 confident wrong answers. The fourth refusal set exists because the other three all name a subject the corpus has never seen, so every one of them is turned away by the vocabulary check alone - one gate measured 26 times, and not the hard one |
 | regressions | one per defect an independent review reproduced, each pinned so it cannot come back quietly |
 
 ### Retrieval quality
@@ -456,8 +465,9 @@ RETRIEVAL QUALITY
   not in corpus (set 1)                 6       0      0        6
   not in corpus (set 2)                10       0      0       10
   not in corpus (set 3)                10       0      0       10
+  in corpus, unanswerable               8       0      0        8
   ----------------------------------------------------------------
-  97 questions asked: 56 answered correctly, 1 wrong, 26 of 26 correctly refused
+  105 questions asked: 56 answered correctly, 1 wrong, 34 of 34 correctly refused
 ```
 
 `wrong` is the only column that matters. A refusal costs a reader a lookup; a confident

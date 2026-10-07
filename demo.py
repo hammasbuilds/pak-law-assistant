@@ -7,12 +7,23 @@ the text substituted that day. Which one is correct depends entirely on the
 date the question is about. No network, no model, no dependencies.
 """
 
+import contextlib
 import sys
 
 sys.path.insert(0, "src")
 
 from paklaw.answer import LawAssistant
 from paklaw.corpus import Corpus, Provision
+
+# Windows defaults the console to the ANSI code page - cp437 on a US install, cp850
+# in parts of Europe - and the corpus prose this prints contains an em dash.
+# `demo_mcp.py` exited 1 with `UnicodeEncodeError` on exactly that console while
+# the server's `--check` and its protocol channel had both been fixed for it. This
+# one survives today because of which strings it happens to print, which is not a
+# reason to leave it depending on that.
+for _stream in (sys.stdout, sys.stderr):
+    with contextlib.suppress(AttributeError, OSError, ValueError):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 PECA_OLD = (
     "Whoever intentionally and publicly exhibits or displays or transmits any information "

@@ -326,3 +326,111 @@ def test_a_refusal_never_carries_a_passage_and_an_answer_always_does():
             assert answer.passages
             assert answer.refusal_status == ""
             assert answer.refusal_reason == ""
+
+
+# -- the caveat belongs to the answer, not to one transport -------------------------
+
+
+def _library(tmp_path):
+    """A `LawAssistant` over a corpus whose record stops before the questions asked."""
+    import sys
+
+    from paklaw.answer import LawAssistant
+    from paklaw.mcp_server import load_corpus
+
+    del sys
+    path = tmp_path / "c.jsonl"
+    write_jsonl([row()], path, meta={"as_at": "2025-06-30"})
+    corpus, _ = load_corpus(str(path))
+    return LawAssistant(corpus=corpus), corpus
+
+
+#: Question shapes that take different return paths out of `answer`. A citation
+#: spelled out leaves four lines before the ordinary path does, which is how the first
+#: fix for this missed it.
+SHAPES = {
+    "a citation spelled out": "section 302 PPC",
+    "an ordinary question": "what is the punishment for qatl-i-amd?",
+    "a question that refuses": "what is the punishment for dacoity?",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+def test_the_library_attaches_the_coverage_caveat_too(tmp_path, shape):
+    """`Corpus.coverage_warnings` had one caller: the MCP server.
+
+    So `demo.py` and every library consumer got the confident answer with no caveat,
+    while the README's "record coverage - what the corpus does and does not claim to
+    know" row reads as a property of the library. A reader asking about 2026 against a
+    corpus recorded to 2025-06-30 was told the text in force without being told the
+    record stops before the date.
+    """
+    assistant, _ = _library(tmp_path)
+    answer = assistant.answer(SHAPES[shape], as_of="2026-01-01")
+    assert any("up to 2025-06-30" in w for w in answer.warnings), (shape, answer.warnings)
+
+
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+def test_the_library_and_the_server_say_the_same_thing(tmp_path, shape):
+    """Two paths to one answer, and the caveat was on one of them. Compared rather
+    than asserted twice, because "both say it" is the claim."""
+    from paklaw.mcp_server import LawServer, load_corpus
+
+    assistant, _ = _library(tmp_path)
+    path = tmp_path / "c.jsonl"
+    server = LawServer(*load_corpus(str(path)))
+
+    from_library = [w for w in assistant.answer(SHAPES[shape], as_of="2026-01-01").warnings]
+    over_protocol = server.answer_question({"question": SHAPES[shape], "as_of": "2026-01-01"})[
+        "warnings"
+    ]
+    coverage = lambda notes: sorted(w for w in notes if "records amendments up to" in w)  # noqa: E731
+    assert coverage(from_library) == coverage(over_protocol), (shape, from_library, over_protocol)
+
+
+def test_a_date_inside_the_record_gets_no_caveat_from_either(tmp_path):
+    """A caveat on every answer is a caveat nobody reads."""
+    from paklaw.mcp_server import LawServer, load_corpus
+
+    assistant, _ = _library(tmp_path)
+    path = tmp_path / "c.jsonl"
+    server = LawServer(*load_corpus(str(path)))
+
+    inside = assistant.answer("section 302 PPC", as_of="2020-01-01")
+    assert not any("up to" in w for w in inside.warnings), inside.warnings
+    over = server.answer_question({"question": "section 302 PPC", "as_of": "2020-01-01"})
+    assert not any("up to" in w for w in over["warnings"]), over["warnings"]
+
+
+def test_the_caveat_is_attached_at_one_place_not_per_return():
+    """`_answer` has eleven returns, and eleven is how many chances there are to miss
+    one. `answer` wraps it, so a new return path cannot be the one that forgets - which
+    is the mistake the first fix for this made, and the reason the call was in the
+    server to begin with.
+    """
+    import ast
+    import inspect
+
+    from paklaw.answer import LawAssistant
+
+    source = inspect.getsource(LawAssistant)
+    tree = ast.parse("class X:\n" + "\n".join("    " + line for line in source.split("\n")[1:]))
+    bodies = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name in ("answer", "_answer")
+    }
+    assert set(bodies) == {"answer", "_answer"}, sorted(bodies)
+
+    calls_in = {
+        name: sum(
+            1
+            for sub in ast.walk(node)
+            if isinstance(sub, ast.Call) and getattr(sub.func, "attr", None) == "coverage_warnings"
+        )
+        for name, node in bodies.items()
+    }
+    assert calls_in == {"answer": 1, "_answer": 0}, calls_in
+
+    returns = sum(1 for sub in ast.walk(bodies["_answer"]) if isinstance(sub, ast.Return))
+    assert returns >= 8, f"_answer has {returns} returns; the wrapper covers all of them"

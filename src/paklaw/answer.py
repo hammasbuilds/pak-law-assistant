@@ -68,6 +68,12 @@ class Passage:
     #: here, so the order a client is given can be checked against numbers it has.
     ranking: float
     coverage: float
+    #: The same share weighted by how much each question term tells you, which is what
+    #: decides whether this answer is given at all. A question can lose the only word
+    #: it is about and still clear a count-based bar: see `Hit.information_coverage`.
+    #: Both are reported because they answer different questions, and the gate is on
+    #: this one.
+    information_coverage: float
     matched_terms: str
     status_note: str = ""
 
@@ -187,6 +193,7 @@ class LawAssistant:
             score=hit.score,
             ranking=hit.ranking,
             coverage=round(hit.coverage, 4),
+            information_coverage=round(hit.information_coverage, 4),
             matched_terms=hit.why(),
             status_note=p.status_note(as_of),
         )
@@ -226,6 +233,39 @@ class LawAssistant:
     # ---- the answer ------------------------------------------------------------
 
     def answer(
+        self,
+        question: str,
+        *,
+        as_of: str | dt.date | None = None,
+        statute: str | None = None,
+    ) -> Answer:
+        """An answer, or a refusal, with what the corpus cannot know attached.
+
+        A thin wrapper so the coverage caveat is added at ONE place. `_answer` below
+        has eleven return statements - a citation spelled out, a citation not in
+        force, an unknown statute, a weak match, an unreliable citation - and
+        `Corpus.coverage_warnings` was called from none of them. Its only caller was
+        the MCP server's `answer_question`, so `demo.py` and every library consumer
+        got the confident answer with no caveat while the README's "record coverage"
+        row reads as a property of the library.
+
+        Adding it to the successful return was the first fix and it was wrong: the
+        citation branch returns four lines earlier, so a question that spells a
+        section out still had no caveat. Eleven returns is eleven chances to miss one,
+        which is the same reason it was in the server to begin with.
+        """
+        result = self._answer(question, as_of=as_of, statute=statute)
+        as_of_date = dt.date.fromisoformat(result.as_of)
+        # What the corpus does not claim to know about this date. Scoped to the
+        # statutes actually cited where there are any, and to the whole corpus
+        # otherwise - a refusal is still an answer about a date.
+        cited = sorted({p.statute for p in result.passages})
+        for note in self.corpus.coverage_warnings(as_of_date, cited or None):
+            if note not in result.warnings:
+                result.warnings.append(note)
+        return result
+
+    def _answer(
         self,
         question: str,
         *,
@@ -420,7 +460,10 @@ class LawAssistant:
             )
             return result
 
-        if hits[0].coverage <= self.min_coverage:
+        # The weighted share, not the count. See `Hit.information_coverage`: a
+        # question can lose the only word it is about and still clear a count-based
+        # bar on two or three words every provision contains.
+        if hits[0].information_coverage <= self.min_coverage:
             top = hits[0]
             result.refused = True
             result.refusal_status = "weak_match"
@@ -436,6 +479,13 @@ class LawAssistant:
         kept = [
             h
             for h in hits
+            # The COUNT here, not the weighted share. This filter decides which
+            # hits are shown beside the first one, and widening it flipped a
+            # deliberate refusal into an answer: "can a court impose simple
+            # imprisonment?" is held inside s.57's blob, and letting s.53 through
+            # instead of refusing is a different decision from the one being fixed.
+            # The weighted share gates the TOP hit, which is where the wrong citation
+            # came from.
             if h.coverage > self.min_coverage
             and h.score >= self.min_score
             and not h.missing_qualifiers

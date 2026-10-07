@@ -31,6 +31,7 @@ from test_retrieval_quality import (  # noqa: E402
     ANSWERABLE,
     FRESH,
     FRESH_MUST_REFUSE,
+    IN_VOCABULARY_MUST_REFUSE,
     MUST_REFUSE,
     PARAPHRASES,
     UNANSWERABLE,
@@ -99,6 +100,10 @@ def main() -> int:
         refusals(assistant, "not in corpus (set 1)", "", UNANSWERABLE),
         refusals(assistant, "not in corpus (set 2)", "", MUST_REFUSE),
         refusals(assistant, "not in corpus (set 3)", "", FRESH_MUST_REFUSE),
+        # Built from the corpus's own words, which the three above are not: each of
+        # those names a subject the corpus has never seen, so all of them are turned
+        # away by the vocabulary check alone. This row is the hard case.
+        refusals(assistant, "in corpus, unanswerable", "", list(IN_VOCABULARY_MUST_REFUSE)),
     ]
 
     print("\nRETRIEVAL QUALITY")

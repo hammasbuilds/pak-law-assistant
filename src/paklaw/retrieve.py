@@ -429,6 +429,11 @@ class Hit:
     # Terms that select a different provision and are absent from this one. A hit with
     # any of these is about a neighbouring offence, not this question.
     missing_qualifiers: list[str] = field(default_factory=list)
+    # The weight of every content term of the question - matched and missing alike -
+    # which is its IDF over the corpus as of this date. Carried so `coverage` can be
+    # a share of the question's INFORMATION rather than of its word count, and so a
+    # caller can see which word the share turned on.
+    term_weights: dict[str, float] = field(default_factory=dict)
     # Question terms that appear nowhere in the corpus as of this date, in any form.
     # The same for every hit, carried here because it is the reason a caller refuses:
     # "dacoity" is absent from a corpus of thirteen sections, and the honest answer to
@@ -438,9 +443,43 @@ class Hit:
 
     @property
     def coverage(self) -> float:
-        """Share of the question's content terms the provision contains."""
+        """Share of the question's content terms the provision contains.
+
+        The sort's primary key, and a count rather than a weighted share on purpose.
+        Weighting it by IDF was tried: it reorders the results and took the benchmark
+        from 1 wrong answer in 97 to 4, because a provision matching one rare word
+        then outranks the provision the question is actually about -
+        "what does the word animal mean in the Penal Code?" went to s.52A.
+
+        `information_coverage` is the weighted view, and it decides whether to answer
+        at all. The two questions are different: which provision is closest, and
+        whether the closest one is close enough.
+        """
         total = len(self.matched_terms) + len(self.missing_terms)
         return len(self.matched_terms) / total if total else 0.0
+
+    @property
+    def information_coverage(self) -> float:
+        """Share of the question's information the provision contains, IDF-weighted.
+
+        The gate, because a count of content words cannot tell which word the question
+        was about. "who may grant pardon in a case of qatl-i-amd?" matched `qatl`,
+        `amd` and `case` and missed `grant` and `pardon` - 3 of 5, clearing a 0.5 bar -
+        so s.302 PPC came back with a correct-looking citation while s.55A, "the right
+        of the President to grant pardons", sat unreturned in the same corpus. The only
+        two words the question was *about* were the two missing ones, and `pardon`
+        appears in one provision of twenty-six where `case` is in most of them.
+
+        The weights are the IDFs the scorer already computes, so this is the same view
+        of the corpus the ranking takes rather than a second one.
+        """
+        if not self.term_weights:
+            return self.coverage
+        whole = sum(self.term_weights.values())
+        if not whole:
+            return 0.0
+        found = sum(w for term, w in self.term_weights.items() if term in self.matched_terms)
+        return found / whole
 
     def why(self) -> str:
         """Why this provision was returned, in terms a lawyer can check."""
@@ -527,6 +566,18 @@ class BM25Index:
     # term -> the index words that count as it. Depends only on the term and _by_stem,
     # so it is rebuilt with the index and never outlives one.
     _form_cache: dict[str, set[str]] = field(default_factory=dict)
+    # Every stem in the corpus's raw text, stopwords included - which the index above
+    # is not. Used for one thing only: deciding whether a question's word is REALLY
+    # absent from the corpus.
+    #
+    # `commits`, `committed`, `punished`, `punishable`, `liable`, `person` and fifty
+    # more are in `LEGAL_STOPWORDS`, so they are erased from the index. A question
+    # asking about "the commission of qatl-i-amd" stems `commission` to `commit`,
+    # finds nothing in the index, and was told the word "appears in no provision here"
+    # - of a corpus whose s.300 opens "Whoever commits qatl". The refusal was a false
+    # statement about the statute book, delivered with a refusal's authority, which is
+    # the defect class a wrong citation belongs to.
+    _text_stems: set[str] = field(default_factory=set)
 
     def fit(self, provisions: Sequence[Provision]) -> BM25Index:
         self.documents = list(provisions)
@@ -536,6 +587,7 @@ class BM25Index:
         self._by_stem = {}
         self._heading_tokens = []
         self._form_cache = {}
+        self._text_stems = set()
 
         for provision in self.documents:
             tokens = (
@@ -547,6 +599,12 @@ class BM25Index:
             )
             self._tokens.append(tokens)
             self._heading_tokens.append(set(tokenise(provision.heading)))
+            # Stopwords kept here and nowhere else: this set answers "is the word in
+            # the corpus at all", not "can it rank a provision".
+            for word in tokenise(provision.text, keep_stopwords=True) + tokenise(
+                provision.heading, keep_stopwords=True
+            ):
+                self._text_stems.update(_stems(word))
             frequencies = Counter(tokens)
             self._frequencies.append(frequencies)
             self._document_frequency.update(frequencies.keys())
@@ -598,11 +656,16 @@ class BM25Index:
             return []
 
         # Computed once: it depends on the question and the corpus, not the provision.
+        # "in any form" has to mean in any form. A term is unknown only when neither
+        # the index nor the corpus's raw text holds a word that stems to it - otherwise
+        # the refusal tells the reader their word is absent from the statute book when
+        # the statute book contains it as a stopword.
         unknown = sorted(
             term
             for term in set(terms)
             if term not in NOT_A_SUBJECT
             and not any(self._document_frequency.get(form) for form in self._forms(term))
+            and not (set(expand(term)) & self._text_stems)
         )
 
         hits: list[Hit] = []
@@ -664,6 +727,23 @@ class BM25Index:
                         matched_terms=matched,
                         missing_terms=missing,
                         heading_coverage=round(heading_coverage, 4),
+                        # A term the corpus does not hold ANYWHERE weighs nothing.
+                        # It cannot distinguish one provision from another, so its
+                        # absence from this one says nothing about this one - and
+                        # unweighted IDF gives it the maximum weight precisely
+                        # because it is rare, which is backwards. "how many years
+                        # does imprisonment for life count as?" refused on `count`
+                        # and `many`: ordinary English, in no provision, and under
+                        # pure IDF the two heaviest words in the question.
+                        #
+                        # A term that IS somewhere in the corpus and not here is the
+                        # informative case, and `pardon` - one provision in
+                        # twenty-six - is the one that matters.
+                        term_weights={
+                            term: round(max(self._idf(f) for f in self._forms(term)), 4)
+                            for term in set(terms)
+                            if any(self._document_frequency.get(f) for f in self._forms(term))
+                        },
                         missing_qualifiers=sorted(set(missing) & QUALIFIERS),
                         unknown_terms=unknown,
                         ranking=round(score * (1 + self.heading_weight * heading_coverage), 6),
