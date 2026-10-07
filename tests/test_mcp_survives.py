@@ -145,3 +145,30 @@ def test_the_reply_to_every_hostile_line_is_still_on_one_line():
     assert len(lines) == 4, lines
     for line in lines:
         json.loads(line)
+
+
+def test_a_second_initialize_at_an_unknown_version_is_refused_too():
+    """The README says "a re-initialize at a different version is -32600".
+
+    It compared what was AGREED, and an unknown version agrees to the newest - so a
+    second handshake asking for "9999-01-01" landed on the version already in force,
+    differed in nothing, and was accepted. Harmless, and not what the sentence says.
+    Compared on what the client ASKED for now: asking for a different version is
+    changing your mind about the session, whatever the negotiation lands on.
+    """
+    replies = run(
+        [
+            init("2025-06-18"),
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "initialize",
+                "params": {"protocolVersion": "9999-01-01", "capabilities": {}},
+            },
+            _ping(),
+        ]
+    )
+    second = [r for r in replies if r.get("id") == 7]
+    assert second and "error" in second[0], second
+    assert second[0]["error"]["code"] == -32600, second[0]
+    assert [r for r in replies if r.get("id") == AFTER], "the session ended"

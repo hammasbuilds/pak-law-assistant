@@ -87,10 +87,13 @@ _COMMON = {
 #: questions, so none of the three can move without one of the others.
 #:
 #: 121, not 101: the population is four questions per provision and the corpus went
-#: from 26 provisions to 31 when the importer stopped folding ss.58-66 into s.57. It
-#: was 87 right, 5 wrong, 9 refused over 101 - 86% right; it is 110 / 3 / 8 over 121,
-#: which is 91%, on a strictly larger set of questions.
-EXPECTED = {"asked": 121, "right": 110, "wrong": 3, "refused": 8}
+#: from 26 provisions to 31 when the importer stopped folding ss.58-66 into s.57.
+#:
+#: 87 / 5 / 9 over 101 (86% right), then 110 / 3 / 8 over 121 (91%), now 118 / 3 / 0
+#: over 121 - 98%. The eight refusals were the catch-all `citation_unreliable` branch
+#: firing on definition sections, each one telling a reader that the answer was buried
+#: inside another provision in a corpus where nothing is buried.
+EXPECTED = {"asked": 121, "right": 118, "wrong": 3, "refused": 0}
 
 #: Of the three, the ones where the question's every word is in the cited provision as
 #: well as in the expected one. All of them, now: s.54 and s.55 commute death and
@@ -186,15 +189,31 @@ def test_the_ambiguous_mistakes_really_are_ambiguous(corpus, assistant):
     )
 
 
-def test_the_refusal_share_is_what_it_says(corpus, assistant):
-    """The number this repository could not see.
+def test_no_question_built_from_a_provision_is_refused(corpus, assistant):
+    """The number this repository could not see, and the only right value for it.
 
-    It was a quarter, and 26 of those 27 were the heading questions - refused because
-    `say`, `tell` and `show` were read as the subject of the question. It is 8 of 121
-    now. Bounded rather than pinned on its own: the exact counts are pinned by
-    `test_the_figures_are_the_ones_the_docstring_states`, and this says the share is
-    small, which is the claim.
+    It was a quarter of the population, and 26 of those 27 were the heading questions,
+    refused because `say`, `tell` and `show` were read as the subject. Then 8 of 121,
+    every one of them the `citation_unreliable` catch-all telling a reader the answer
+    was buried inside another provision, in a corpus where nothing is buried.
+
+    Zero, pinned, rather than the band `0.03 < share < 0.15` this used to carry - which
+    sat around a measured 0.066 and would have absorbed a doubling of refusals in either
+    direction, and whose lower bound asserted that some refusals must happen.
+
+    Every question here is built from one provision's own text, so the corpus holds the
+    subject and the words by construction. A refusal is this system failing to find
+    something it has. The case where a refusal IS right - the words present, the subject
+    absent - is `IN_VOCABULARY_MUST_REFUSE` in `test_retrieval_quality.py`, and this
+    generator cannot produce one.
     """
-    measured, _ = _measure(corpus, assistant)
-    share = measured["refused"] / measured["asked"]
-    assert 0.03 < share < 0.15, share
+    measured, mistakes = _measure(corpus, assistant)
+    assert measured["refused"] == 0, (
+        f"{measured['refused']} of {measured['asked']} questions built from a "
+        "provision's own words were refused; every one of them is a question this "
+        "corpus can answer"
+    )
+    # And the population is still the whole corpus, so a zero that came from asking
+    # nothing would fail here.
+    assert measured["asked"] == EXPECTED["asked"], measured
+    assert measured["right"] + len(mistakes) == measured["asked"], measured

@@ -399,7 +399,7 @@ def provision_spans(text: str, *, include_repealed: bool = False) -> list[tuple[
 MIN_TAIL_RUN = 3
 
 
-def _tail_run(chain: list[_Candidate], weak: list[_Candidate]) -> list[_Candidate]:
+def _tail_run(chain: list[_Candidate], weak: list[_Candidate], text: str = "") -> list[_Candidate]:
     """The unlisted headings that continue the contents, in order.
 
     Only after the chain's last accepted provision, and only while each number is the
@@ -407,6 +407,19 @@ def _tail_run(chain: list[_Candidate], weak: list[_Candidate]) -> list[_Candidat
     80 ends the run. The same shape `buried_numbers` uses to REPORT them, used to parse
     them - the detector and the parser disagreeing is what left nine sections inside a
     tenth with a warning attached.
+
+    And every member has to have a BODY, which is what separates a contents list that
+    stopped from a numbered list inside the last section's text:
+
+        3. Remedies. The court may award the following, in this order:
+        4. Compensation for loss actually suffered.
+        5. Costs of the proceedings.
+
+    4, 5 and 6 there are clauses of s.3, and parsing them as sections truncated s.3 at
+    the colon, dropped three substantive clauses, and reported them as omitted sections
+    with "(0 characters)". A genuinely omitted section carries the note saying it is
+    omitted - the four in the Pakistan Code fixture run 20 to 86 characters - and a
+    statute does not consist of headings.
     """
     if not chain or not weak:
         return []
@@ -427,7 +440,18 @@ def _tail_run(chain: list[_Candidate], weak: list[_Candidate]) -> list[_Candidat
             continue
         run.append(candidate)
         number = int(digits)
-    return run if len(run) >= MIN_TAIL_RUN else []
+    if len(run) < MIN_TAIL_RUN:
+        return []
+
+    if text:
+        bodies = []
+        for i, candidate in enumerate(run):
+            end = run[i + 1].start if i + 1 < len(run) else len(text)
+            bodies.append(text[candidate.body_start : end].strip())
+        if not any(bodies):
+            # Every one of them is a bare title: a list, not a run of sections.
+            return []
+    return run
 
 
 def _layout(text: str) -> _Layout:
@@ -505,7 +529,7 @@ def _layout(text: str) -> _Layout:
         candidates.append(_Candidate(match.start(), body_start, number, heading, weight, order))
 
     chain = [candidates[i] for i in _heaviest_rising_chain(candidates)]
-    tail = _tail_run(chain, weak)
+    tail = _tail_run(chain, weak, text)
     if tail:
         candidates = candidates + tail
         chain = chain + tail
@@ -519,14 +543,13 @@ def buried_offset(body: str, number: str) -> int:
     `len(body)` when nothing is buried, so `body[:buried_offset(...)]` is always the
     provision's own text.
     """
-    try:
-        here = int("".join(c for c in number if c.isdigit()) or 0)
-    except ValueError:
-        return len(body)
-    last = here
+    # (digits, letters), like `buried_numbers` and for the same reason: comparing digits
+    # alone could not see s.302A inside s.302, which is how a Pakistani statute is
+    # amended - a section inserted between two others takes a letter rather than
+    # renumbering the book.
+    last = provision_order(number)
     for match in _SWALLOWED.finditer(body):
-        digits = int("".join(c for c in match.group(1) if c.isdigit()))
-        if digits <= last:
+        if provision_order(match.group(1)) <= last:
             continue
         return match.start()
     return len(body)
@@ -540,19 +563,25 @@ def buried_numbers(body: str, number: str) -> list[str]:
     and a citation is not a heading. A run of increasing numbers each followed by a
     capitalised title is.
     """
-    try:
-        here = int("".join(c for c in number if c.isdigit()) or 0)
-    except ValueError:
-        return []
+    # Ordered by (digits, letters), not by digits alone. Comparing digits made the
+    # commonest Pakistani amendment invisible: a section inserted between two existing
+    # ones takes a LETTER rather than renumbering the book, so s.302A inside s.302 read
+    # as `302 <= 302` and was skipped - and a corpus holding it reported nothing
+    # malformed, served the blob under "Section 302 PPC", and never reached the
+    # safeguard that exists for precisely this.
+    #
+    # `provision_order` is what every other comparison in this package uses, and it puts
+    # 302A after 302 and before 303, which is what the Act means by it.
+    here = provision_order(number)
     found: list[str] = []
     last = here
     for match in _SWALLOWED.finditer(body):
         candidate = match.group(1)
-        digits = int("".join(c for c in candidate if c.isdigit()))
-        if digits <= last:
+        order = provision_order(candidate)
+        if order <= last:
             continue
         found.append(candidate)
-        last = digits
+        last = order
     return found
 
 

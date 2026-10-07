@@ -168,6 +168,9 @@ class LawAssistant:
     # Ranking parameters, forwarded to the index. Here so a sweep can reach them
     # without editing the source, which is how one sweep came to measure nothing.
     tuning: dict = field(default_factory=dict)
+    #: Every word the corpus's own text uses, built once. The guard against another
+    #: country's statute asks whether a name is made of these.
+    _words: set[str] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.search is None:
@@ -265,6 +268,32 @@ class LawAssistant:
                 result.warnings.append(note)
         return result
 
+    def _corpus_words(self) -> set[str]:
+        """Every word this corpus's own text and headings use, lowercased.
+
+        The guard against another country's statute asks whether a name is made of
+        words this corpus uses - PPC s.49 says "reckoned according to the British
+        calendar", so "British" is this book's own language and not evidence of English
+        law. Built from the index's stem set, which already exists for exactly the
+        question "is this word in the corpus at all".
+        """
+        if self._words is None:
+            from .retrieve import _stems, tokenise
+
+            words: set[str] = set()
+            for provision in self.corpus.provisions:
+                for word in tokenise(provision.text, keep_stopwords=True) + tokenise(
+                    provision.heading, keep_stopwords=True
+                ):
+                    # The word AND its stems, because the corpus writes "commutation"
+                    # in a heading and a question writes "Commutation Order". The
+                    # index's own stem set holds stems only, which left the full word
+                    # unrecognised and refused a phrase built from s.54's own heading.
+                    words.add(word)
+                    words.update(_stems(word))
+            self._words = words
+        return self._words
+
     def _answer(
         self,
         question: str,
@@ -280,6 +309,32 @@ class LawAssistant:
             else as_of
         )
         result = Answer(question=question, as_of=as_of_date.isoformat())
+
+        # An Act or a jurisdiction this corpus does not answer for.
+        #
+        # FIRST, before the citation route, which returns a hundred lines below and
+        # so decided this for itself: "is an Indian citizen protected by Article 4?"
+        # was answered while "what is the punishment for murder in India?" was
+        # refused - the same guard, applied or not depending on whether a section
+        # number was in the sentence. Which country's law is being asked for does
+        # not depend on how the question is spelled.
+        # The citation route already refused "section 302 of
+        # the Indian Penal Code"; the prose route scoped on the substring "penal code"
+        # and answered "the punishment for murder under the Indian Penal Code" with
+        # s.302 PPC. Same words, same question, and the wrong country's criminal law.
+        if statute is None:
+            foreign = names_unloaded_act(
+                question, extra=self.aliases, corpus_words=self._corpus_words()
+            )
+            if foreign is not None:
+                result.refused = True
+                result.refusal_status = "act_not_recognised"
+                result.refusal_reason = (
+                    f"{REFUSAL_FOREIGN_ACT}: {foreign!r}. This corpus holds Pakistani "
+                    "statutes, and a provision of the same number in another country's "
+                    "Act says something else."
+                )
+                return result
 
         citations, superseded = self._cited_provisions(question, as_of_date, statute)
         result.superseded = superseded
@@ -379,22 +434,6 @@ class LawAssistant:
         # not content to match against a provision. Leaving them in refused the question
         # for missing "penal" and "code" — words that appear in no provision's text,
         # because they are the name of the book the provisions are in.
-        # An Act or a jurisdiction this corpus does not answer for, named in prose
-        # rather than in a citation. The citation route already refused "section 302 of
-        # the Indian Penal Code"; the prose route scoped on the substring "penal code"
-        # and answered "the punishment for murder under the Indian Penal Code" with
-        # s.302 PPC. Same words, same question, and the wrong country's criminal law.
-        if statute is None:
-            foreign = names_unloaded_act(question, extra=self.aliases)
-            if foreign is not None:
-                result.refused = True
-                result.refusal_status = "act_not_recognised"
-                result.refusal_reason = (
-                    f"{REFUSAL_FOREIGN_ACT}: {foreign!r}. This corpus holds Pakistani "
-                    "statutes, and a provision of the same number in another country's "
-                    "Act says something else."
-                )
-                return result
 
         asked = question
         if statute is None:
@@ -498,18 +537,27 @@ class LawAssistant:
             )
             return result
 
-        # Passages after the first are held to the same bar, or a strong first answer
-        # carries two unrelated ones in with it.
-        kept = [
+        # Passages AFTER THE FIRST are held to the same bar, or a strong first answer
+        # carries two unrelated ones in with it. The first is kept: whether there is an
+        # answer at all was decided above, by `information_coverage`, the score and the
+        # qualifier check, and this filter is about what else to show beside it.
+        #
+        # It used to run over every hit, so a top hit that had passed all three gates
+        # was dropped by the count-based `coverage` the gate above it deliberately does
+        # not use - and the refusal that followed had no true reason left to give. The
+        # sweep that found it: "what counts as an oath?" refused with "the provision
+        # that answers this is inside another provision's text", of a corpus where
+        # nothing is inside anything, for every single-word-heading definition section
+        # in the book.
+        kept = [hits[0]] + [
             h
-            for h in hits
-            # The COUNT here, not the weighted share. This filter decides which
-            # hits are shown beside the first one, and widening it flipped a
-            # deliberate refusal into an answer: "can a court impose simple
-            # imprisonment?" is held inside s.57's blob, and letting s.53 through
-            # instead of refusing is a different decision from the one being fixed.
-            # The weighted share gates the TOP hit, which is where the wrong citation
-            # came from.
+            for h in hits[1:]
+            # The COUNT here, not the weighted share. This decides which hits are shown
+            # beside the first one, and widening it flipped a deliberate refusal into
+            # an answer: "can a court impose simple imprisonment?" is held inside s.57's
+            # blob, and letting s.53 through instead of refusing is a different decision
+            # from the one being fixed. The weighted share gates the TOP hit, which is
+            # where the wrong citation came from.
             if h.coverage > self.min_coverage
             and h.score >= self.min_score
             and not h.missing_qualifiers
@@ -552,6 +600,12 @@ class LawAssistant:
                     "because the citation would name the wrong one"
                 )
         if not kept and hits:
+            # Reachable only through the swallowed-provision removal above, which is the
+            # one thing this sentence is true of: the hit WAS removed because its match
+            # came from text belonging to a different provision. It used to be the
+            # catch-all for an empty `kept` however it emptied, so a corpus with nothing
+            # buried in it - `swallowed_headings() == {}` - still told readers that
+            # something was.
             result.refused = True
             result.refusal_status = "citation_unreliable"
             result.refusal_reason = REFUSAL_UNRELIABLE_CITATION

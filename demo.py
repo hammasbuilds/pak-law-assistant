@@ -97,7 +97,7 @@ ASKS = [
     (
         "What is the penalty for publicly transmitting false information about a person?",
         "2026-01-01",
-        "asked about today",
+        "asked about 2026-01-01",
     ),
     (
         "What is the penalty for publicly transmitting false information about a person?",

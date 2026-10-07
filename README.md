@@ -217,15 +217,17 @@ refused rather than answered from the nearest-looking provision.*
 The same library, exposed to Claude Desktop, Claude Code or any other
 [Model Context Protocol](https://modelcontextprotocol.io) client as **eight read-only
 tools**. It still has zero dependencies: the server implements the stdio transport
-directly (newline-delimited JSON-RPC) instead of pulling in an SDK. Every tool was called
-through the official Python SDK client (`mcp` 2.2.0), and the suite drives the server
-byte by byte over a pipe — including as a real subprocess, and including a check that
+directly (newline-delimited JSON-RPC) instead of pulling in an SDK. Every tool was called once by hand
+through the official Python SDK client (`mcp` 2.2.0) — that interop check was a person
+at a terminal, not a test, and nothing here re-runs it; `mcp` is in no dependency group
+and would not be, since the point is to need no SDK. What the suite does is drive the
+server byte by byte over a pipe — including as a real subprocess, and including a check that
 each tool's structured result matches the `outputSchema` it declares.
 
 | Tool | Use it for |
 |---|---|
 | `answer_question` | "what does the law say about X *on this date*": provision text with citations, or one of the nine refusals |
-| `check_citations` | **auditing a draft** (a brief, a notice, or a model's own answer). Every citation gets a status for the date: `in_force`, `amended_since`, `not_in_force`, `not_yet_in_force`, `unknown_provision`, `no_act_named`, `statute_not_loaded`, `not_checkable` or `before_record` (dated before the corpus starts recording that statute), plus its character offset |
+| `check_citations` | **auditing a draft** (a brief, a notice, or a model's own answer). Every citation gets a status for the date: `in_force`, `amended_since`, `not_in_force`, `not_yet_in_force`, `unknown_provision`, `no_act_named`, `act_not_recognised` (an Act this corpus does not hold, which is usually another country's), `statute_not_loaded`, `not_checkable` or `before_record` (dated before the corpus starts recording that statute), plus its character offset |
 | `provision_history` | "when did section 20 change?": every version, how each one ended, and the instrument on each side |
 | `compare_versions` | "what did the amendment do?": a word-level diff between the text on two dates |
 | `list_provisions` | a statute's table of contents on a date, in statute order (2 < 10 < 10A), paged |
@@ -459,7 +461,7 @@ RETRIEVAL QUALITY
   question set                          n   right  wrong  refused
   ----------------------------------------------------------------
   in a person's words                  17      16      0        1
-  paraphrases                          34      26      0        8
+  paraphrases                          34      29      0        5
   written later again                  20      15      0        5
   ----------------------------------------------------------------
   not in corpus (set 1)                 6       0      0        6
@@ -467,7 +469,7 @@ RETRIEVAL QUALITY
   not in corpus (set 3)                10       0      0       10
   in corpus, unanswerable               8       0      0        8
   ----------------------------------------------------------------
-  105 questions asked: 57 answered correctly, 0 wrong, 34 of 34 correctly refused
+  105 questions asked: 60 answered correctly, 0 wrong, 34 of 34 correctly refused
 ```
 
 `wrong` is the only column that matters. A refusal costs a reader a lookup; a confident
@@ -527,24 +529,25 @@ Run them with
   so "the meaning of animal in this Code" is refused although s.47 ("The word 'animal'
   denotes…") answers it; and a word the corpus has never seen refuses the whole question,
   so "does the word animal cover a bird?" is refused because the corpus contains no
-  *bird*, not because it contains no *animal*. Across the three question sets that is 14
-  refusals of 71 answerable questions against no wrong answer — one in five questions
-  refused that a reader would have answered, to make a wrong citation rare.
+  *bird*, not because it contains no *animal*. Across the three question sets that is 11
+  refusals of 71 answerable questions against no wrong answer — about one in six
+  questions refused that a reader would have answered, to make a wrong citation rare.
   `python tests/bench.py --ablate` removes the rule and prints both sides:
 
   ```
                             right  wrong  refused  answered anyway
-    as shipped                 57      0       14                0
-    rule removed               59      0       12                6
+    as shipped                 60      0       11                0
+    rule removed               65      1        5               22
   ```
 
-  Two more questions answered, and six questions answered that name a subject the
-  corpus does not hold — three of them with s.302, "punished with death as qisas", for
-  offences such as dacoity with murder and culpable homicide not amounting to murder.
-  That is the trade, and this repository chooses this side of it. This paragraph used to
-  quote "three confident wrong citations, two of them s.302" from a review, with nothing
-  in the repository producing the figure; a second reviewer reproduced the experiment and
-  got six and four. The command is here so the number is not a recollection.
+  Five more questions answered — and one wrong citation, plus twenty-two answers to
+  questions that name a subject the corpus does not hold. That is the trade, and this
+  repository chooses this side of it. The figures moved when the refusal catch-all was
+  fixed: refusals on answerable questions fell from 14 to 11, and removing the rule now
+  costs a wrong citation where before it cost only over-answering. This paragraph used
+  to quote "three confident wrong citations, two of them s.302" from a review with
+  nothing producing the figure; the command is here so the number is not a
+  recollection.
 - Sections are the unit. A subsection citation returns its whole section, and an amended
   subsection has to be recorded as a new text of the whole section.
 - Urdu support is tokenisation-level. Full bilingual retrieval needs the Urdu

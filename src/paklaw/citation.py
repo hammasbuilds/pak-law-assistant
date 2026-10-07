@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import functools
 import re
+from collections.abc import Container
 from dataclasses import dataclass, replace
 
 # Common statute abbreviations, normalised to a canonical key.
@@ -183,6 +184,18 @@ _NOT_AFTER_LETTER = r"(?<![A-Za-z])(?<![A-Za-z]\.)"
 # word can appear, so "(Amendment)" and "(General Provisions)" both parse.
 _TITLE_WORD = r"(?:[A-Z][\w.'\-]*|\([^)]{1,48}\))"
 _ACT_TITLE = r"(?-i:(?:" + _TITLE_WORD + r"\s+){1,6}(?:Code|Act|Ordinance|Order|Rules|Regulations))"
+
+#: The titles a QUESTION is refused for naming, which is a narrower set than the
+#: titles the parser recognises. `Order`, `Rules` and `Regulations` are ordinary
+#: English: "can the Provincial Government pass a Commutation Order?" was refused
+#: for naming an Act called "Commutation Order", two words of which the first is
+#: s.54's own heading. Recognising a name and refusing a question because of one are
+#: different decisions, and `_ACT_TITLE` was doing both - narrowing it broke
+#: `Rule 5 of the Companies Rules`, which is a citation and parses correctly.
+#:
+#: A subordinate instrument a reader actually means is still caught where it is
+#: cited: `SRO 1125/2011` and `Order XXXIX Rule 1 CPC` have their own patterns.
+_REFUSABLE_TITLE = r"(?-i:(?:" + _TITLE_WORD + r"\s+){1,6}(?:Code|Act|Ordinance|Constitution))"
 
 # Divisions of an Act that are not provisions. The bare pattern would otherwise read
 # "Chapter 5 PPC" as section 5 of the PPC, which is a different thing that exists.
@@ -641,7 +654,6 @@ def resolve_bare(citations: list[Citation], *, default_statute: str) -> list[Cit
 
 
 # Statute names, longest first, so "pakistan penal code" is preferred over "penal code".
-_STATUTE_PHRASES = sorted(STATUTES, key=len, reverse=True)
 
 
 def find_statute(text: str, *, extra: dict[str, str] | None = None) -> tuple[str, str] | None:
@@ -711,7 +723,12 @@ _FOREIGN_WORD = re.compile(
 )
 
 
-def names_unloaded_act(text: str, *, extra: dict[str, str] | None = None) -> str | None:
+def names_unloaded_act(
+    text: str,
+    *,
+    extra: dict[str, str] | None = None,
+    corpus_words: Container[str] | None = None,
+) -> str | None:
     """An Act or jurisdiction in `text` that this corpus does not answer for.
 
     Returns the words that named it, or None.
@@ -721,12 +738,37 @@ def names_unloaded_act(text: str, *, extra: dict[str, str] | None = None) -> str
     `parse` already refuses citations that carry one, so the only thing missing was for
     the prose route to ask. And a jurisdiction named without any title at all, which is
     how the question is usually put: "what is the punishment for murder in India?".
+
+    `corpus_words` is every word the corpus's own text uses, and a name made entirely of
+    those is not evidence of another country's statute. Without it this refused:
+
+      * "is a year reckoned by the **British** calendar?" - PPC s.49 reads "reckoned
+        according to the British calendar", so the corpus holds both the word and the
+        subject, and the refusal called an adjective an Act;
+      * "can the Provincial Government pass a **Commutation Order**?" - a capitalised
+        phrase ending in "Order", built out of s.54's own heading, which `_ACT_TITLE`
+        cannot tell from "Companies Act".
+
+    The corpus is the authority on what it holds and was never asked. Passing nothing
+    keeps the old behaviour, which is what the citation parser wants: a CITATION naming
+    the Indian Penal Code is refused whatever words the corpus shares with it.
     """
     table = {**STATUTES, **(extra or {})}
-    for match in re.finditer(_ACT_TITLE, text):
+    known = corpus_words if corpus_words is not None else ()
+
+    def is_corpus_language(phrase: str) -> bool:
+        words = [w for w in re.findall(r"[\w']+", phrase.lower()) if len(w) > 2]
+        return bool(words) and all(w in known for w in words)
+
+    for match in re.finditer(_REFUSABLE_TITLE, text):
         title = re.sub(r"\s+", " ", match.group(0).strip()).lower()
         title = re.sub(r"^the\s+", "", title)
-        if title not in table:
-            return match.group(0).strip()
+        if title in table:
+            continue
+        if is_corpus_language(title):
+            continue
+        return match.group(0).strip()
     found = _FOREIGN_WORD.search(text)
-    return found.group(0) if found else None
+    if found is None:
+        return None
+    return None if is_corpus_language(found.group(0)) else found.group(0)

@@ -52,7 +52,7 @@ from typing import Any, BinaryIO
 
 from . import __version__
 from .answer import Answer, LawAssistant
-from .audit import changes_between, check_citations, compare_versions, contents
+from .audit import ALL_STATUSES, changes_between, check_citations, compare_versions, contents
 from .citation import CANONICAL_STATUTES, normalise_statute, parse, statute_aliases
 from .corpus import Corpus, CorpusError
 from .ingest import build_checked, read_corpus
@@ -376,7 +376,12 @@ TOOLS: list[dict[str, Any]] = [
                             "type": "string",
                             "enum": ["statutory", "subordinate", "reported"],
                         },
-                        "status": {"type": "string"},
+                        # The enum, declared. It was a bare string, so the test
+                        # that validates every tool's output against its own schema
+                        # on every path could not notice that the README listed nine
+                        # of these and the code emits ten - `act_not_recognised`,
+                        # the one the README calls the most serious.
+                        "status": {"type": "string", "enum": sorted(ALL_STATUSES)},
                         "note": {"type": "string"},
                         "heading": {"type": ["string", "null"]},
                         "offset": {"type": "integer", "description": "Character offset."},
@@ -869,6 +874,11 @@ class LawServer:
         self.loaded = sorted({p.statute for p in corpus})
         self.aliases = statute_aliases(self.loaded)
         self.protocol_version: str | None = None
+        #: What the client ASKED for, which is what a second handshake is compared
+        #: against. `protocol_version` is what was agreed, and an unknown version agrees
+        #: to the newest - so comparing that accepted a re-handshake the README says is
+        #: refused.
+        self.protocol_requested: str | None = None
         self._schemas = {t["name"]: t["inputSchema"] for t in TOOLS}
 
     @property
@@ -1094,12 +1104,19 @@ class LawServer:
     def _initialize(self, params: dict) -> dict:
         requested = params.get("protocolVersion")
         agreed = requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
-        if self.protocol_version is not None and agreed != self.protocol_version:
+        if self.protocol_requested is not None and requested != self.protocol_requested:
             # Initialise happens once per session. A second one used to be accepted and
             # to reset the version - so a client that re-sent `initialize` with a
             # version this server does not know had its session silently moved to the
             # newest one, which changes whether later results carry
             # `structuredContent`. The results change shape and nothing says why.
+            #
+            # Compared on what was REQUESTED, not on what was agreed. An unknown version
+            # agrees to the newest, so a second handshake asking for "9999-01-01" landed
+            # on the version already in force, differed in nothing, and was accepted -
+            # while the README said a re-initialize at a different version is refused.
+            # A client asking for a different version is changing its mind about the
+            # session whatever the negotiation would land on.
             #
             # Re-sending the SAME version is allowed: that is a retry of a message the
             # client is not sure arrived, and answering it identically strands nobody.
@@ -1110,6 +1127,7 @@ class LawServer:
                 "every later result",
             )
         self.protocol_version = agreed
+        self.protocol_requested = requested
         return {
             "protocolVersion": self.protocol_version,
             "capabilities": {"tools": {"listChanged": False}},

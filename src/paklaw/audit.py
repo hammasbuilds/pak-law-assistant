@@ -50,6 +50,12 @@ PROBLEMS = (REPEALED, NOT_YET, UNKNOWN, NO_ACT, FOREIGN_ACT)
 REVIEW = (AMENDED_SINCE,)
 UNVERIFIED = (NOT_LOADED, NOT_CHECKED, BEFORE_RECORD)
 
+#: Every status a citation can carry. Declared here and read by the MCP schema, so the
+#: two cannot drift: the schema said `{"type": "string"}` and the README listed nine of
+#: these, which is how `act_not_recognised` - the one the README calls the most serious -
+#: went undocumented with a validator running over every tool's output on every path.
+ALL_STATUSES = (IN_FORCE, *PROBLEMS, *REVIEW, *UNVERIFIED)
+
 
 def _date(value: str | dt.date) -> dt.date:
     return dt.date.fromisoformat(value) if isinstance(value, str) else value
@@ -193,13 +199,105 @@ def _check_one(corpus: Corpus, c: Citation, date: dt.date, loaded: set[str]) -> 
 _WORD = re.compile(r"\S+")
 
 
+#: The most words this will compare in ONE passage, after the sentence-level pass
+#: below has cut the text into passages. The word comparison is the expensive one:
+#: measured on alternating matched and unmatched words - what an amending Act produces -
+#: 1,000 words took 7.5s, 2,000 took 59s and 3,000 took 206s, which is cubic, not
+#: quadratic. A passage this big is one sentence of 1,200 words and there is nothing
+#: sensible to do with it but say so.
+#:
+#: `autojunk=False` stays: the heuristic it disables drops any element in more than 1%
+#: of a long sequence, which in a statute is "shall", "the" and "section" - the words a
+#: legal diff has to line up on. Bounding the input it sees is what makes keeping it
+#: affordable.
+MAX_DIFF_WORDS = 1_200
+
+#: Sentence endings, which is how the text is cut before any of that. A provision has
+#: tens of sentences, so matching them is free whatever the words look like.
+_SENTENCE = re.compile(r"(?<=[.;:])\s+")
+
+#: The most changed passages one diff reports. A reply is a protocol message, and
+#: 1,460,000 characters of corpus text produced 5.8 MB in one of them.
+MAX_DIFF_CHANGES = 500
+
+
 def word_diff(before: str, after: str) -> list[dict]:
     """Changed passages only, with their surrounding words cut away.
 
     Word-level rather than character-level: "three years" → "five years" is the fact a
     lawyer needs, and a character diff renders it as "thr" → "fiv".
+
+    Bounded on both axes, and each bound reports itself rather than truncating quietly -
+    a diff that stopped early and does not say so is worse than no diff. Over the word
+    budget it returns one row saying the comparison was not made and how big the texts
+    are; over the change budget it returns the changes it found and a row saying how
+    many more there were.
     """
+    changes: list[dict] = []
+    for before_part, after_part in _changed_passages(before, after):
+        if len(changes) >= MAX_DIFF_CHANGES:
+            changes.append(
+                {
+                    "change": "truncated",
+                    "before": None,
+                    "after": (
+                        f"more than {MAX_DIFF_CHANGES:,} changed passages; the rest are "
+                        "not listed. These two versions have little text in common."
+                    ),
+                }
+            )
+            break
+        changes.extend(_word_level(before_part, after_part))
+    return changes
+
+
+def _changed_passages(before: str, after: str) -> list[tuple[str, str]]:
+    """(before, after) of each run of sentences that differs. Equal runs are dropped.
+
+    The cheap half. A provision has tens of sentences, so this comparison costs nothing
+    whatever the words inside them look like - which is the whole point, because the
+    word comparison below is cubic on the text an amending Act produces.
+    """
+    a = [s for s in _SENTENCE.split(before) if s.strip()]
+    b = [s for s in _SENTENCE.split(after) if s.strip()]
+    out = []
+    # autojunk ON here, and OFF in `_word_level` below. The two passes want opposite
+    # things from it: this one is only locating the regions that differ, so treating a
+    # sentence that repeats throughout the text as uninteresting costs nothing and is
+    # exactly what keeps it fast - the alternation that made the word pass cubic sits in
+    # the 1%-popular elements autojunk drops. The fine pass is where accuracy matters
+    # and where the input is a passage, so it keeps every word in play.
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b).get_opcodes():
+        if op == "equal":
+            continue
+        if op == "replace" and (i2 - i1) == (j2 - j1):
+            # The same number of sentences, some words changed - which is what an
+            # amending Act does. Paired one for one, so each word comparison sees one
+            # sentence instead of the whole changed run: joining the run made a 13,000
+            # character provision of repeated sentences exceed the word budget and come
+            # back "not compared", which is a worse answer than a slow one.
+            out.extend(zip(a[i1:i2], b[j1:j2], strict=True))
+            continue
+        out.append((" ".join(a[i1:i2]), " ".join(b[j1:j2])))
+    return out
+
+
+def _word_level(before: str, after: str) -> list[dict]:
+    """The word diff of one changed passage, which is short by construction."""
     a, b = _WORD.findall(before), _WORD.findall(after)
+    if max(len(a), len(b)) > MAX_DIFF_WORDS:
+        return [
+            {
+                "change": "not compared",
+                "before": None,
+                "after": (
+                    f"this passage is {len(a):,} and {len(b):,} words with no sentence "
+                    f"break to cut it at; the word comparison is limited to "
+                    f"{MAX_DIFF_WORDS:,} because it is cubic in the worst case. Read the "
+                    "two texts with `get_provision` at each date."
+                ),
+            }
+        ]
     changes = []
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
         if op == "equal":

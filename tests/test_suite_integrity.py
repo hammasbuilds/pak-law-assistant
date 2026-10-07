@@ -5,7 +5,7 @@ An independent review installed the package the way the README says to - `pip in
 
     333 passed, 2 skipped
 
-against a suite of 534. `tests/test_mcp_server.py` had `pytest.importorskip(
+against a suite of 561. `tests/test_mcp_server.py` had `pytest.importorskip(
 "jsonschema")` at module level, 950 lines in. A module-level importorskip raises during
 *collection*, so the whole module was dropped; `tests/test_user_review.py` imports
 `body`, `call`, `init`, `run` and `tool` from it, so that module was dropped as well.
@@ -102,8 +102,8 @@ def test_the_suite_is_all_of_it():
 
     stated = re.search(r"(\d+) tests? collected", done.stdout)
     assert stated, done.stdout[-2000:]
-    assert int(stated.group(1)) == 534, (
-        f"{stated.group(1)} tests collected, not 534. If that is deliberate, the figure "
+    assert int(stated.group(1)) == 561, (
+        f"{stated.group(1)} tests collected, not 561. If that is deliberate, the figure "
         "here and in the README move together."
     )
 
@@ -128,6 +128,7 @@ def test_the_modules_that_import_from_another_test_module_are_named():
     assert importers == {
         "test_generated_questions.py": {"test_retrieval_quality"},
         "test_mcp_survives.py": {"tests.test_mcp_server"},
+        "test_refusals_are_true.py": {"tests.test_retrieval_quality"},
         "test_user_review.py": {"tests.test_mcp_server"},
     }, importers
 

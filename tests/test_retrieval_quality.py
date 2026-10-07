@@ -5,7 +5,7 @@ that a citation parses, that a range expands. None of it says whether retrieval
 *finds the right provision* — and a legal assistant that refuses correctly and
 retrieves badly is still useless.
 
-So this builds a corpus out of the real-source fixtures (26 provisions, ~11,000
+So this builds a corpus out of the real-source fixtures (31 provisions, ~10,000
 characters of actual Penal Code and Constitution text, no network) and asks it
 questions the way someone would type them. Two numbers come out:
 
