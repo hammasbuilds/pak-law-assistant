@@ -400,9 +400,7 @@ def provision_spans(text: str, *, include_repealed: bool = False) -> list[tuple[
 MIN_TAIL_RUN = 3
 
 
-def _tail_run(
-    chain: list[_Candidate], weak: list[_Candidate], text: str
-) -> list[_Candidate]:
+def _tail_run(chain: list[_Candidate], weak: list[_Candidate], text: str) -> list[_Candidate]:
     """The unlisted headings that continue the contents, in order.
 
     Only after the chain's last accepted provision, and only while each number is the

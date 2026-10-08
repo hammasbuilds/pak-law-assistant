@@ -687,9 +687,7 @@ def test_a_question_in_the_statutes_own_words_is_answered_from_it(assistant):
     """
     answer = assistant.answer("acting without due care and attention", as_of="2026-01-01")
     assert not answer.refused, (answer.refusal_status, answer.refusal_reason)
-    assert answer.passages[0].citation == "Section 52 PPC", [
-        p.citation for p in answer.passages
-    ]
+    assert answer.passages[0].citation == "Section 52 PPC", [p.citation for p in answer.passages]
     assert "due care and attention" in answer.passages[0].text
 
 
@@ -733,6 +731,7 @@ def test_a_refusal_never_says_a_word_is_absent_when_a_form_of_it_is_present(assi
         "a refusal named a word as appearing in no provision while the corpus holds a "
         f"form of it: {liars}"
     )
+
 
 def test_an_adverb_does_not_veto_an_answer(assistant):
     answer = assistant.answer("can a sentence of death never be commuted?", as_of="2026-01-01")

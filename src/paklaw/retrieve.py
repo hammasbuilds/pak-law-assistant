@@ -606,6 +606,7 @@ KEY_TERM_MARGIN = 1.0
 #: question whose rarest word is its frame, and why `meaning` is in `NOT_A_SUBJECT`.
 KEY_TERM_CEILING: float | None = 0.60
 
+
 @dataclass
 class Hit:
     provision: Provision
@@ -684,9 +685,7 @@ class Hit:
         # meaning - so without this the rule refused a question s.47 answers, which is
         # the same mistake `absent_terms` already keeps this list to avoid.
         weights = {
-            term: weight
-            for term, weight in self.term_weights.items()
-            if term not in NOT_A_SUBJECT
+            term: weight for term, weight in self.term_weights.items() if term not in NOT_A_SUBJECT
         }
         if len(weights) < 2:
             return ""

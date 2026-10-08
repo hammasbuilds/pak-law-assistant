@@ -294,7 +294,10 @@ class LawAssistant:
             for provision in self.corpus.provisions:
                 for field_text in (provision.heading, provision.text):
                     words = tokenise(field_text, keep_stopwords=True)
-                    pairs.update(zip(words, words[1:]))
+                    # Bigrams: the two sequences differ in length by one BY DESIGN, so
+                    # `strict=False` is the right answer rather than a silenced warning -
+                    # `strict=True` here would raise on every provision.
+                    pairs.update(zip(words, words[1:], strict=False))
             self._pairs = pairs
             self._pairs_at = len(self.corpus.provisions)
         return self._pairs

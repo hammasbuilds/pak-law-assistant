@@ -17,7 +17,6 @@ from __future__ import annotations
 import datetime as dt
 import difflib
 import re
-
 from dataclasses import dataclass
 
 from .citation import (
@@ -353,10 +352,7 @@ _PAIR_RATIO = 0.5
 
 def _corresponds(before: str, after: str) -> bool:
     """Whether these two sentences are one sentence amended."""
-    return (
-        difflib.SequenceMatcher(a=before.split(), b=after.split()).quick_ratio()
-        >= _PAIR_RATIO
-    )
+    return difflib.SequenceMatcher(a=before.split(), b=after.split()).quick_ratio() >= _PAIR_RATIO
 
 
 #: A run of unchanged sentences is trusted to mark a correspondence between the two

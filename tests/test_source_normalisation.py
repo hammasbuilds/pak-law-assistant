@@ -22,8 +22,8 @@ from pathlib import Path
 import pytest
 
 from paklaw.audit import _SENTENCE
-from paklaw.ingest import build_checked
 from paklaw.corpus import normalise_source
+from paklaw.ingest import build_checked
 from paklaw.split import split_act
 from tests.test_retrieval_quality import _corpus_rows
 
@@ -115,9 +115,7 @@ def test_the_diff_of_one_item_of_such_a_list_names_only_that_item():
     the size it happened at."""
     from paklaw.audit import word_diff
 
-    before = normalise_source(
-        "Firstly, Qisas ; Secondly, Diyat ; Thirdly, Arsh ; Fourthly, Daman"
-    )
+    before = normalise_source("Firstly, Qisas ; Secondly, Diyat ; Thirdly, Arsh ; Fourthly, Daman")
     after = before.replace("Arsh", "Compensation")
     changes = word_diff(before, after)
     assert changes == [{"change": "replaced", "before": "Arsh", "after": "Compensation"}], changes

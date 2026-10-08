@@ -291,10 +291,22 @@ def test_one_row_cannot_be_megabytes():
 @pytest.mark.parametrize(
     ("label", "pair"),
     [
-        ("nothing in common", (" ".join(f"a{i}" for i in range(200_000)), " ".join(f"b{i}" for i in range(200_000)))),
+        (
+            "nothing in common",
+            (
+                " ".join(f"a{i}" for i in range(200_000)),
+                " ".join(f"b{i}" for i in range(200_000)),
+            ),
+        ),
         ("alternating, one sentence", _alternating(200_000, sentences=False)),
         ("alternating, many sentences", _alternating(200_000, sentences=True)),
-        ("repeated provision text", ("shall be punished with seven years. " * 20_000, "shall be punished with ten years. " * 20_000)),
+        (
+            "repeated provision text",
+            (
+                "shall be punished with seven years. " * 20_000,
+                "shall be punished with ten years. " * 20_000,
+            ),
+        ),
     ],
 )
 def test_the_reply_cannot_be_megabytes(label: str, pair: tuple[str, str]):
@@ -403,9 +415,7 @@ def test_one_compare_call_is_neither_slow_nor_megabytes(characters: int):
 
     corpus = _two_version_corpus(characters)
     started = time.monotonic()
-    result = compare_versions(
-        corpus, "PPC:section:302", before="2015-01-01", after="2021-01-01"
-    )
+    result = compare_versions(corpus, "PPC:section:302", before="2015-01-01", after="2021-01-01")
     elapsed = time.monotonic() - started
 
     assert elapsed < BUDGET_SECONDS, (characters, elapsed)

@@ -93,7 +93,7 @@ def _words(sentence: str) -> list[str]:
     """
     out = []
     for raw in sentence.split():
-        word = raw.strip("(),:;.\"“”’")
+        word = raw.strip('(),:;."“”’')
         if word and word[0].isalpha():
             out.append(word)
     return out
@@ -145,9 +145,7 @@ def test_every_mistake_is_a_clause_several_provisions_share(corpus, assistant):
         assert got in AMBIGUOUS[key], (got, AMBIGUOUS[key])
 
 
-def test_the_right_provision_is_among_the_passages_even_when_it_is_not_first(
-    corpus, assistant
-):
+def test_the_right_provision_is_among_the_passages_even_when_it_is_not_first(corpus, assistant):
     """Which is the difference between a wrong answer and an ambiguous question.
 
     A tool that serves three candidates for a question with three equally good answers
