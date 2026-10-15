@@ -25,6 +25,19 @@
 
 ---
 
+## Interface
+
+![The demo interface](docs/interface.png)
+
+A local front end over the server: pick a scenario, paste or drop a draft, or call any of
+the eight tools directly. Python `http.server` and one HTML file — no framework, no build
+step, no npm. It starts `python -m paklaw.mcp_server` and speaks the protocol to it, so
+every answer on the page arrived through a real `tools/call`.
+
+Kept outside the package deliberately: `pak-law-assistant` installs with zero dependencies
+and no web surface. The call console in [`observability/`](observability) is the other
+page, and it ships here.
+
 ## Install
 
 No dependencies, so nothing to resolve:

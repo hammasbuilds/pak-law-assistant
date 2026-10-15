@@ -6,6 +6,10 @@ refused**.
 Zero dependencies, like the rest of the package — `http.server`, one HTML file, a JSON
 Lines log. No Prometheus, no Grafana, no database, no build step.
 
+![The call console](console.png)
+
+*Real traffic: 11 calls, an 18.2% refusal rate, and the statuses behind it.*
+
 ```bash
 # 1. run the server with recording on. Off unless this names a file.
 PAKLAW_TELEMETRY=calls.jsonl paklaw-mcp
