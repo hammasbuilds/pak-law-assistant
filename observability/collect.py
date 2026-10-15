@@ -22,9 +22,7 @@ level.
 from __future__ import annotations
 
 import json
-import time
 from collections import Counter
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -59,14 +57,6 @@ def read(path: Path, limit: int | None = None) -> list[dict[str, Any]]:
                 events.append(event)
     events.sort(key=lambda e: e.get("at") or 0)
     return events[-limit:] if limit else events
-
-
-def within(events: Iterable[dict], seconds: float | None) -> list[dict]:
-    """The events from the last `seconds`, or all of them when seconds is None."""
-    if not seconds:
-        return list(events)
-    cutoff = time.time() - seconds
-    return [e for e in events if (e.get("at") or 0) >= cutoff]
 
 
 def _percentile(values: list[float], fraction: float) -> float:
