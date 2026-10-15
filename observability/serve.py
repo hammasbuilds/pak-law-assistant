@@ -14,9 +14,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
+import subprocess
 import sys
 import threading
+import time
+import urllib.error
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,6 +32,97 @@ sys.path.insert(0, str(HERE))
 import collect  # noqa: E402
 
 PAGE = HERE / "console.html"
+
+
+# ---- the tool's own page ------------------------------------------------------------
+#
+# The console says what happened; the tool's page is where something goes in and an answer
+# comes out. Opening one from the other saves going back to a desktop shortcut.
+#
+# The directory is a guess that can be overridden, never an assumption. These front ends
+# live outside the package deliberately - this installs with zero dependencies and no web
+# surface - so the default is a sibling directory, `PAKLAW_TOOL_DIR` overrides it, and when neither
+# exists the console says so and gives the command rather than pretending.
+
+TOOL_ENV = "PAKLAW_TOOL_DIR"
+TOOL_DEFAULT = "../_demos/paklaw"
+TOOL_PORT = 8765
+TOOL_NAME = "Pakistan Law"
+
+
+def tool_directory() -> Path | None:
+    """Where the tool's page is, or None if nothing is there."""
+    raw = (os.environ.get(TOOL_ENV) or "").strip()
+    candidates = (
+        [Path(raw)]
+        if raw
+        else [
+            Path(__file__).resolve().parent.parent / TOOL_DEFAULT,
+        ]
+    )
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if (resolved / "serve.py").is_file():
+            return resolved
+    return None
+
+
+def tool_answering(port: int) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1.5) as response:
+            return response.status == 200
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return False
+
+
+def tool_state() -> dict:
+    """Everything the button needs to decide what to do."""
+    folder = tool_directory()
+    running = tool_answering(TOOL_PORT)
+    return {
+        "name": TOOL_NAME,
+        "url": f"http://127.0.0.1:{TOOL_PORT}/",
+        "running": running,
+        "found": folder is not None,
+        "directory": str(folder) if folder else None,
+        "variable": TOOL_ENV,
+        "command": (
+            f"python {folder / 'serve.py'}"
+            if folder
+            else f"set {TOOL_ENV} to the directory holding the tool's serve.py"
+        ),
+    }
+
+
+def start_tool() -> dict:
+    """Start it if it is not already up, and wait until it answers.
+
+    Returns the same shape as `tool_state`, so the page has one thing to read whether it
+    started something or found it already running.
+    """
+    if tool_answering(TOOL_PORT):
+        return tool_state()
+    folder = tool_directory()
+    if folder is None:
+        return tool_state()
+    # Its own console window, so closing this one does not take the tool with it, and
+    # its output is its own rather than interleaved with the console's.
+    creation = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+    subprocess.Popen(
+        [sys.executable, "serve.py"],
+        cwd=str(folder),
+        env={**os.environ, "DEMO_NO_BROWSER": "1"},
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creation,
+    )
+    # Waited for rather than assumed: a URL opened before the server answers shows a
+    # connection error and the reader reloads by hand.
+    for _ in range(40):
+        time.sleep(0.5)
+        if tool_answering(TOOL_PORT):
+            break
+    return tool_state()
 
 
 class Console(BaseHTTPRequestHandler):
@@ -66,8 +162,19 @@ class Console(BaseHTTPRequestHandler):
             payload["log_exists"] = self.log_file.exists()
             body = json.dumps(payload, ensure_ascii=False, indent=1).encode("utf-8")
             self._send(200, body, "application/json; charset=utf-8")
+        elif path == "/api/tool":
+            body = json.dumps(tool_state()).encode("utf-8")
+            self._send(200, body, "application/json; charset=utf-8")
         else:
             self._send(404, b'{"error":"no route"}', "application/json; charset=utf-8")
+
+    def do_POST(self) -> None:  # noqa: N802
+        """Start the tool's page. The only thing this server does besides read."""
+        if self.path.split("?", 1)[0] != "/api/tool/start":
+            self._send(404, b'{"error":"no route"}', "application/json; charset=utf-8")
+            return
+        body = json.dumps(start_tool()).encode("utf-8")
+        self._send(200, body, "application/json; charset=utf-8")
 
 
 def free_port(preferred: int) -> int:
