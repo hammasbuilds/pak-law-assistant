@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en" data-brand="paklaw">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pakistan Law · call console</title>
+<meta name="description" content="What the pak-law-assistant MCP server was asked, how long it took, and why it refused.">
+<meta name="theme-color" content="#faf8f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171316" media="(prefers-color-scheme: dark)">
+<style>
+  /* ---- claret on warm paper: the same palette as this project's demo page, so the
+     two read as one piece of work. Measured, not eyeballed: body text 16.1:1 light and
+     15.3:1 dark, secondary 5.8 and 6.8, the label on a filled button 7.9. ---- */
+  :root {
+    --bg: #faf8f6; --panel: #ffffff; --ink: #211a1c; --muted: #6b5f62;
+    --line: #ded2d5; --accent: #8e2f4a; --good: #157f3b; --bad: #bf3b1f;
+    --warn: #926a07; --code-bg: #f4eff0; --on-accent: #ffffff;
+    --radius: 3px;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, "Segoe UI", Inter, sans-serif;
+    --serif: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171316; --panel: #201a1e; --ink: #f0e8ea; --muted: #a79a9e;
+      --line: #342a2f; --accent: #d988bd; --good: #5fcf8a; --bad: #f58a80;
+      --warn: #e0b458; --code-bg: #130f12; --on-accent: #2a0f1a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171316; --panel: #201a1e; --ink: #f0e8ea; --muted: #a79a9e;
+    --line: #342a2f; --accent: #d988bd; --good: #5fcf8a; --bad: #f58a80;
+    --warn: #e0b458; --code-bg: #130f12; --on-accent: #2a0f1a;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px 64px; }
+
+  header { border-bottom: 2px solid var(--ink); margin-bottom: 26px; }
+  .bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 26px 0 10px; }
+  h1 { font-family: var(--serif); font-size: 25px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  h1 .dim { color: var(--muted); font-weight: 400; }
+  .sub { color: var(--muted); max-width: 70ch; margin: 0 0 16px; }
+  .meta { display: flex; gap: 8px; flex-wrap: wrap; padding-bottom: 18px; }
+  .chip { font: 11px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase;
+          border: 1px solid var(--line); border-radius: 3px; padding: 6px 10px;
+          color: var(--muted); background: var(--panel); white-space: nowrap; }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .chip.live { border-color: var(--good); color: var(--good); }
+  .chip.bad { border-color: var(--bad); color: var(--bad); }
+  #theme { margin-left: auto; background: none; border: 1px solid var(--line);
+           color: var(--muted); border-radius: 3px; padding: 6px 12px; cursor: pointer;
+           font: 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .04em; }
+  #theme:hover { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+
+  h2 { font-family: var(--serif); font-size: 16px; font-weight: 600; margin: 32px 0 12px;
+       border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  h2:first-of-type { margin-top: 0; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+           border-radius: 3px; padding: 18px 20px; }
+  .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 14px 16px; }
+  .tile .k { font: 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .tile .v { font-family: var(--mono); font-size: 26px; font-weight: 600; margin-top: 6px; line-height: 1.1; }
+  .tile .n { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .tile .v.accent { color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; font: 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .05em;
+       color: var(--muted); padding: 0 10px 8px; border-bottom: 1px solid var(--line); }
+  th.num, td.num { text-align: right; font-family: var(--mono); }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  tbody tr:last-child td { border-bottom: 0; }
+  .scroll-x { overflow-x: auto; }
+  .scroll-x table { min-width: 34rem; }
+
+  /* A bar that is a share of the row's own total, not of some global maximum, so two
+     rows are comparable by eye. */
+  .bar-cell { min-width: 120px; }
+  .meter { height: 8px; background: var(--code-bg); border-radius: 2px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; background: var(--accent); }
+  .meter > i.good { background: var(--good); }
+  .meter > i.bad { background: var(--bad); }
+
+  code { font-family: var(--mono); font-size: 12.5px; background: var(--code-bg); padding: 1px 5px; border-radius: 2px; }
+  .muted { color: var(--muted); }
+  .note { border-left: 3px solid var(--warn); background: var(--code-bg);
+          padding: 10px 14px; margin: 14px 0 0; font-size: 13.5px; border-radius: 0 3px 3px 0; }
+  .empty { color: var(--muted); font-size: 13.5px; }
+  footer { color: var(--muted); font-size: 12.5px; margin-top: 44px;
+           border-top: 1px solid var(--line); padding-top: 16px; }
+
+  :where(a, button, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="bar">
+    <h1>Pakistan Law <span class="dim">/ call console</span></h1>
+    <button id="theme" type="button">theme</button>
+  </div>
+  <p class="sub">What the MCP server was asked, how long it took, and — the part worth
+  watching — <strong>why it refused</strong>. Read from the JSON Lines file the server
+  appends to when <code>PAKLAW_TELEMETRY</code> names one. Nothing here is written back.</p>
+  <div class="meta" id="meta"><span class="chip">reading…</span></div>
+</header>
+
+<div id="body">
+  <p class="empty">Loading…</p>
+</div>
+
+<footer>
+  Console: Python <code>http.server</code> + one HTML file, no dependencies and no build
+  step. The server records only when <code>PAKLAW_TELEMETRY</code> is set, writes one
+  file, and never records the question or the draft — the file holds the shape of the
+  traffic, not its content.
+</footer>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const themeBtn = $("#theme");
+const saved = (() => { try { return localStorage.getItem("paklaw-console-theme"); } catch { return null; } })();
+if (saved) document.documentElement.dataset.theme = saved;
+themeBtn.onclick = () => {
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const now = document.documentElement.dataset.theme || (dark ? "dark" : "light");
+  const next = now === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("paklaw-console-theme", next); } catch {}
+};
+
+const el = (tag, props = {}, kids = []) => {
+  const node = Object.assign(document.createElement(tag), props);
+  for (const kid of kids) node.append(kid);
+  return node;
+};
+const tile = (k, v, note, cls) => el("div", { className: "tile" }, [
+  el("div", { className: "k", textContent: k }),
+  el("div", { className: "v" + (cls ? " " + cls : ""), textContent: v }),
+  ...(note ? [el("div", { className: "n", textContent: note })] : []),
+]);
+
+function when(seconds) {
+  if (!seconds) return "—";
+  const d = new Date(seconds * 1000);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+/* A ranked count list with a bar each. Used for refusals, citation statuses and
+   outcomes - three panels with the same shape, so they share one renderer. */
+function ranked(rows, tone) {
+  const total = rows.reduce((sum, [, n]) => sum + n, 0) || 1;
+  if (!rows.length) return el("p", { className: "empty", textContent: "Nothing recorded yet." });
+  const table = el("table", {}, [
+    el("thead", {}, [el("tr", {}, [
+      el("th", { textContent: "status" }),
+      el("th", { className: "num", textContent: "count" }),
+      el("th", { className: "num", textContent: "share" }),
+      el("th", { textContent: "" }),
+    ])]),
+  ]);
+  const body = el("tbody");
+  for (const [name, n] of rows) {
+    const share = n / total;
+    body.append(el("tr", {}, [
+      el("td", {}, [el("code", { textContent: name })]),
+      el("td", { className: "num", textContent: n.toLocaleString() }),
+      el("td", { className: "num", textContent: (share * 100).toFixed(1) + "%" }),
+      el("td", { className: "bar-cell" }, [
+        el("div", { className: "meter" }, [
+          Object.assign(el("i", { className: tone || "" }), { style: `width:${(share * 100).toFixed(1)}%` }),
+        ]),
+      ]),
+    ]));
+  }
+  table.append(body);
+  return el("div", { className: "scroll-x" }, [table]);
+}
+
+function render(d) {
+  const meta = $("#meta");
+  meta.replaceChildren(
+    el("span", { className: "chip", innerHTML: `calls <b>${d.calls.toLocaleString()}</b>` }),
+    el("span", { className: "chip", innerHTML: `tools <b>${d.tools.length}</b>` }),
+    el("span", { className: d.refused ? "chip bad" : "chip",
+                 innerHTML: `refused <b>${d.refused.toLocaleString()}</b>` }),
+    el("span", { className: "chip", innerHTML: `window <b>${when(d.first)} → ${when(d.last)}</b>` }),
+    el("span", { className: d.log_exists ? "chip live" : "chip bad",
+                 innerHTML: `log <b>${esc(d.log.split(/[\\/]/).pop())}</b>` }),
+    ...(d.sample_corpus === true ? [el("span", { className: "chip bad", innerHTML: `corpus <b>sample</b>` })] : []),
+  );
+
+  const out = $("#body");
+  out.replaceChildren();
+
+  if (!d.log_exists) {
+    out.append(el("div", { className: "panel" }, [
+      el("p", { innerHTML: `No log at <code>${esc(d.log)}</code>.` }),
+      el("p", { className: "muted", innerHTML:
+        `Telemetry is off unless you ask for it. Start the server with ` +
+        `<code>PAKLAW_TELEMETRY=${esc(d.log)}</code> and make a call; this page picks it up.` }),
+    ]));
+    return;
+  }
+  if (!d.calls) {
+    out.append(el("div", { className: "panel" }, [
+      el("p", { innerHTML: `The log exists and holds no events yet.` }),
+      el("p", { className: "muted", textContent:
+        "The file is created on the first recorded call, so this is the normal state between starting the server and using it." }),
+    ]));
+    return;
+  }
+
+  // ---- the numbers at the top -------------------------------------------------------
+  out.append(el("h2", { textContent: "At a glance" }));
+  const tiles = el("div", { className: "tiles" }, [
+    tile("calls", d.calls.toLocaleString()),
+    tile("refusal rate", (d.refusal_rate * 100).toFixed(1) + "%",
+         `${d.refused} of ${d.calls}`, "accent"),
+    tile("p50", d.p50 + " ms"),
+    tile("p95", d.p95 + " ms", d.thin ? `only ${d.calls} calls` : null),
+    tile("slowest", d.max + " ms"),
+  ]);
+  out.append(tiles);
+  if (d.thin) {
+    out.append(el("div", { className: "note", innerHTML:
+      `<strong>Read the percentiles as the sample they are.</strong> p95 over ` +
+      `${d.calls} call${d.calls === 1 ? "" : "s"} is close to the slowest one; it becomes ` +
+      `a percentile somewhere past ${d.thin_at}.` }));
+  }
+
+  // ---- the signature panel ----------------------------------------------------------
+  out.append(el("h2", { textContent: "Why it refused" }));
+  const refusals = Object.entries(d.refusals);
+  out.append(el("div", { className: "panel" }, [
+    el("p", { className: "muted", style: "margin-top:0",
+      textContent: "A refusal is an answer here, not a failure: the server declines rather than guessing, and each refusal carries the status that explains it. These are grouped by whatever status the log holds — a status this console has never seen still appears." }),
+    ranked(refusals, "bad"),
+  ]));
+
+  // ---- citation statuses -------------------------------------------------------------
+  const citations = Object.entries(d.citation_statuses);
+  if (citations.length) {
+    out.append(el("h2", { textContent: "Citation statuses seen" }));
+    out.append(el("div", { className: "panel" }, [
+      el("p", { className: "muted", style: "margin-top:0", innerHTML:
+        "Every citation <code>check_citations</code> looked at, by verdict. " +
+        "<code>act_not_recognised</code> is the one to watch: it is a foreign Act that was " +
+        "<em>not</em> read as the Pakistani provision of the same number." }),
+      ranked(citations),
+    ]));
+  }
+
+  // ---- per tool ------------------------------------------------------------------------
+  out.append(el("h2", { textContent: "By tool" }));
+  const table = el("table", {}, [
+    el("thead", {}, [el("tr", {}, [
+      el("th", { textContent: "tool" }),
+      el("th", { className: "num", textContent: "calls" }),
+      el("th", { className: "num", textContent: "refused" }),
+      el("th", { className: "num", textContent: "errors" }),
+      el("th", { className: "num", textContent: "p50 ms" }),
+      el("th", { className: "num", textContent: "p95 ms" }),
+      el("th", { className: "num", textContent: "max ms" }),
+    ])]),
+  ]);
+  const tbody = el("tbody");
+  for (const row of d.tools) {
+    tbody.append(el("tr", {}, [
+      el("td", {}, [el("code", { textContent: row.tool })]),
+      el("td", { className: "num", textContent: row.calls.toLocaleString() }),
+      el("td", { className: "num", textContent: row.refused ? `${row.refused} (${(row.refusal_rate * 100).toFixed(0)}%)` : "0" }),
+      el("td", { className: "num", textContent: String(row.errors + row.rejected) }),
+      el("td", { className: "num", textContent: String(row.p50) }),
+      el("td", { className: "num", textContent: row.thin ? `${row.p95} *` : String(row.p95) }),
+      el("td", { className: "num", textContent: String(row.max) }),
+    ]));
+  }
+  table.append(tbody);
+  out.append(el("div", { className: "panel scroll-x" }, [table]));
+  if (d.tools.some((r) => r.thin)) {
+    out.append(el("p", { className: "muted", style: "font-size:12.5px",
+      textContent: `* fewer than ${d.thin_at} calls, so that column is the slowest of a handful rather than a percentile.` }));
+  }
+
+  // ---- errors ---------------------------------------------------------------------------
+  const errors = Object.entries(d.errors);
+  if (errors.length) {
+    out.append(el("h2", { textContent: "Internal errors" }));
+    out.append(el("div", { className: "panel" }, [ranked(errors, "bad")]));
+  }
+
+  // ---- the tail -------------------------------------------------------------------------
+  out.append(el("h2", { textContent: "Recent calls" }));
+  const recent = el("table", {}, [
+    el("thead", {}, [el("tr", {}, [
+      el("th", { textContent: "time" }),
+      el("th", { textContent: "tool" }),
+      el("th", { textContent: "outcome" }),
+      el("th", { className: "num", textContent: "ms" }),
+    ])]),
+  ]);
+  const rbody = el("tbody");
+  for (const row of d.recent) {
+    const status = row.refusal_status ? ` · ${row.refusal_status}` : "";
+    rbody.append(el("tr", {}, [
+      el("td", { className: "num muted", textContent: when(row.at) }),
+      el("td", {}, [el("code", { textContent: row.tool })]),
+      el("td", { textContent: row.outcome + status }),
+      el("td", { className: "num", textContent: String(row.ms) }),
+    ]));
+  }
+  recent.append(rbody);
+  out.append(el("div", { className: "panel scroll-x" }, [recent]));
+}
+
+async function tick() {
+  try {
+    const answer = await fetch("/api/summary", { cache: "no-store" });
+    render(await answer.json());
+  } catch (err) {
+    $("#meta").replaceChildren(el("span", { className: "chip bad", textContent: "console unreachable" }));
+    $("#body").replaceChildren(el("div", { className: "panel" }, [
+      el("p", { textContent: "The console stopped answering: " + String(err.message) }),
+    ]));
+  }
+}
+tick();
+// Five seconds: a call log is not a stock ticker, and a page that refetches every second
+// is mostly measuring itself.
+setInterval(tick, 5000);
+</script>
+</body>
+</html>

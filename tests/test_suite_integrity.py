@@ -5,7 +5,7 @@ An independent review installed the package the way the README says to - `pip in
 
     333 passed, 2 skipped
 
-against a suite of 620. `tests/test_mcp_server.py` had `pytest.importorskip(
+against a suite of 631. `tests/test_mcp_server.py` had `pytest.importorskip(
 "jsonschema")` at module level, 950 lines in. A module-level importorskip raises during
 *collection*, so the whole module was dropped; `tests/test_user_review.py` imports
 `body`, `call`, `init`, `run` and `tool` from it, so that module was dropped as well.
@@ -102,9 +102,11 @@ def test_the_suite_is_all_of_it():
 
     stated = re.search(r"(\d+) tests? collected", done.stdout)
     assert stated, done.stdout[-2000:]
-    assert int(stated.group(1)) == 620, (
-        f"{stated.group(1)} tests collected, not 620. If that is deliberate, the figure "
-        "here and in the README move together."
+    assert int(stated.group(1)) == 631, (
+        f"{stated.group(1)} tests collected, not 631. If that is deliberate, change the "
+        "figure here. It is the only place the count is pinned: the README deliberately "
+        "quotes none, having said 49, then 226, then 280 - this message used to send a "
+        "reader there to update a number that is not written down any more."
     )
 
 

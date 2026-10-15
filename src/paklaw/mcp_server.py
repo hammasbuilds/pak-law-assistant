@@ -45,12 +45,13 @@ import math
 import os
 import re
 import sys
+import time
 import traceback
 from collections import Counter
 from importlib import resources
 from typing import Any, BinaryIO
 
-from . import __version__
+from . import __version__, telemetry
 from .answer import Answer, LawAssistant
 from .audit import (
     ALL_CHANGE_KINDS,
@@ -1171,16 +1172,48 @@ class LawServer:
         allowed = set(self._schemas[name]["properties"])
         unknown = sorted(set(arguments) - allowed)
         if unknown:
+            # Recorded as well: a client sending the wrong argument name over and over
+            # is the kind of thing the console exists to make visible, and it never
+            # reaches the handler below.
+            telemetry.record({"tool": name, "outcome": "rejected", "ms": 0.0})
             return failed(
                 f"unknown argument(s) {', '.join(unknown)}; "
                 f"{name} takes {', '.join(sorted(allowed)) or 'no arguments'}"
             )
+        started = time.perf_counter()
         try:
             result = handler(arguments)
         except ToolError as exc:
+            telemetry.record(
+                {
+                    "tool": name,
+                    "outcome": "tool_error",
+                    "ms": round((time.perf_counter() - started) * 1000, 2),
+                }
+            )
             return failed(str(exc))
         except Exception as exc:  # a bug in one call must not look like a protocol failure
+            telemetry.record(
+                {
+                    "tool": name,
+                    "outcome": "internal_error",
+                    "error": type(exc).__name__,
+                    "ms": round((time.perf_counter() - started) * 1000, 2),
+                }
+            )
             return failed(f"internal error in {name}: {type(exc).__name__}: {exc}")
+
+        # A refusal is an answer, not a failure - it is the behaviour this server is
+        # built around - so it is its own outcome rather than being counted as `ok`.
+        recorded = telemetry.from_result(result)
+        telemetry.record(
+            {
+                "tool": name,
+                "outcome": "refused" if recorded.get("refused") else "ok",
+                "ms": round((time.perf_counter() - started) * 1000, 2),
+                **recorded,
+            }
+        )
 
         payload = {
             "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
