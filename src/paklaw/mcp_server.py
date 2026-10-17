@@ -122,6 +122,16 @@ TEXT_LIMIT = 200_000
 # question produced a 98 KB reply to say "refused". Enough to correlate a result with a
 # request, and the result says when it has been shortened.
 ECHO_LIMIT = 2_000
+# How many statutes `corpus_info` lists, largest first. The reply grew with the corpus
+# and nothing capped it: over the federal statute book it listed all 970 and came to
+# 509,517 bytes, which is a flood for a page to render and for a model to be handed as
+# context in answer to "what is in here". The totals it reports are over all of them,
+# and the reply says how many it listed out of how many it holds.
+STATUTE_LIMIT = 50
+# How many malformed provisions `corpus_info` lists. Same reason, and the count beside
+# it is the number that matters: the federal corpus has 533 of them, which came to 38 KB
+# of citations nobody asked for in a reply whose job is to say what the corpus is.
+MALFORMED_LIMIT = 20
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -699,7 +709,15 @@ TOOLS: list[dict[str, Any]] = [
                     },
                     "required": ["statute", "provisions", "versions"],
                 },
+                "description": "The largest statutes by provision count, capped. "
+                "Read statutes_held for how many the corpus has.",
             },
+            "statutes_held": {
+                "type": "integer",
+                "description": "How many statutes are in the corpus, which is not the "
+                "length of the list above once the corpus is large.",
+            },
+            "statutes_listed": {"type": "integer"},
             "malformed": {
                 "type": "array",
                 "description": "Provisions whose text runs on into later provisions, so "
@@ -714,6 +732,11 @@ TOOLS: list[dict[str, Any]] = [
                     },
                     "required": ["citation", "appears_to_contain"],
                 },
+            },
+            "malformed_found": {
+                "type": "integer",
+                "description": "How many were found, which is not the length of the "
+                "list above once the corpus is large.",
             },
             "earliest": {"type": ["string", "null"]},
             "latest_change": {"type": ["string", "null"]},
@@ -736,7 +759,10 @@ TOOLS: list[dict[str, Any]] = [
             "recorded_from",
             "sample",
             "source",
+            "malformed_found",
             "statutes",
+            "statutes_held",
+            "statutes_listed",
             "versions",
         ],
     ),
@@ -1111,6 +1137,9 @@ class LawServer:
             counts["versions"] += 1
             counts["in_force"] += p.currently_in_force
         distinct = Counter(p.statute for p in {p.key: p for p in provisions}.values())
+        # Once: it walks every provision, and this method asked for it twice - the list
+        # and then the count of the same thing.
+        malformed = sorted(self.corpus.swallowed_headings().items())
 
         return self._with_corpus_note(
             {
@@ -1125,14 +1154,27 @@ class LawServer:
                         "versions": by_statute[s]["versions"],
                         "currently_in_force": by_statute[s]["in_force"],
                     }
-                    for s in sorted(by_statute)
+                    for s in sorted(by_statute, key=lambda s: (-distinct[s], s))[:STATUTE_LIMIT]
                 ],
+                # Named, because a list that silently stops is read as the whole corpus.
+                # Over four demonstration provisions this list was four rows; over the
+                # federal statute book it is 970 and the reply was 509,517 bytes - a
+                # flood for a page to render and for a model to be handed as context,
+                # in answer to "what is in this corpus". The counts above are over all
+                # of it; `list_provisions` takes a statute and answers for that one.
+                "statutes_held": len(by_statute),
+                "statutes_listed": min(len(by_statute), STATUTE_LIMIT),
                 # What this corpus is known to get wrong, named rather than left for a
                 # reader to notice from a provision that is nine provisions long.
                 "malformed": [
                     {"citation": key, "appears_to_contain": buried}
-                    for key, buried in sorted(self.corpus.swallowed_headings().items())
+                    for key, buried in malformed[:MALFORMED_LIMIT]
                 ],
+                # Capped for the same reason as the statute list, and counted because
+                # the count is the point: a corpus built from a real statute book has
+                # 533 of these, and "533" is the fact a reader needs. The list is a
+                # sample to look at, not the record.
+                "malformed_found": len(malformed),
                 "earliest": min(p.in_force_from for p in provisions).isoformat(),
                 "latest_change": max(
                     max(p.in_force_from, p.in_force_to or p.in_force_from) for p in provisions

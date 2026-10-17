@@ -1304,3 +1304,44 @@ def test_the_score_refusal_shows_a_near_miss_as_a_near_miss():
     # Three decimals, so a gap of a thousandth is visible rather than rounded away.
     assert len(figures.group(1).split(".")[1]) >= 3, figures.group(1)
     assert len(figures.group(2).split(".")[1]) >= 3, figures.group(2)
+
+
+# ---- the index build ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Whoever commits qatl-i-amd shall be punished with death as qisas.",
+        "In this Act, unless there is anything repugnant in the subject or context,—",
+        "The word 'animal' denotes any living creature other than a human being.",
+        "",
+        "   ",
+        "section 302",
+        "A person who, by any act, causes the death of another person",
+    ],
+)
+@pytest.mark.parametrize("defined", [None, set(), {"section"}, {"animal", "act"}])
+def test_filtering_a_tokenised_list_matches_tokenising_with_the_filter(text, defined):
+    """`fit` tokenises each provision once and filters the result, instead of running
+    the tokeniser again for the filtered form.
+
+    It used to tokenise each provision's text three times and its heading twice - six
+    passes where two distinct results exist - which over the 30,131-provision federal
+    corpus was 253,540 calls and most of a 49-second index build. The shortcut is only
+    sound while these two agree, so this is the thing that has to hold.
+    """
+    from paklaw.retrieve import _without_stopwords, tokenise  # noqa: PLC0415
+
+    assert _without_stopwords(tokenise(text, keep_stopwords=True), defined) == tokenise(
+        text, defined=defined
+    )
+
+
+def test_a_defined_word_survives_the_filter_either_way():
+    """The case the `defined` set exists for, through both routes."""
+    from paklaw.retrieve import _without_stopwords, tokenise  # noqa: PLC0415
+
+    words = tokenise("Section means a section of this Act", keep_stopwords=True)
+    assert "section" in _without_stopwords(words, {"section"})
+    assert "section" not in _without_stopwords(words, None)

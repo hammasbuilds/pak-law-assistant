@@ -930,3 +930,62 @@ def test_scoping_to_an_act_removes_the_name_and_not_the_letters():
     )
     assert not answer.refused, answer.refusal_reason
     assert answer.passages[0].citation == "Section 4 ART"
+
+
+def test_corpus_info_does_not_return_the_whole_statute_book():
+    """Observed on the federal corpus: a 509,517-byte reply to "what is in here".
+
+    The list of statutes grew with the corpus and nothing capped it. Over four
+    demonstration provisions it was four rows; over 970 Acts it was 970, which is a
+    flood for a page to render and for a model to be handed as context. The totals stay
+    over the whole corpus - only the list is capped, and the reply says so.
+    """
+    from paklaw.mcp_server import STATUTE_LIMIT
+
+    rows = [
+        {
+            "statute": f"ACT{n:04d}",
+            "unit": "section",
+            "number": str(n),
+            "heading": f"Heading {n}",
+            "text": f"The text of provision {n} of this Act.",
+            "in_force_from": "2000-01-01",
+        }
+        for n in range(STATUTE_LIMIT * 3)
+    ]
+    server = LawServer(build(rows), "fixture")
+    info = server.corpus_info({})
+
+    assert info["statutes_held"] == STATUTE_LIMIT * 3
+    assert info["statutes_listed"] == STATUTE_LIMIT
+    assert len(info["statutes"]) == STATUTE_LIMIT
+    # The counts are over all of it, not over what was listed.
+    assert info["provisions"] == STATUTE_LIMIT * 3
+    assert len(json.dumps(info)) < 100_000
+
+
+def test_corpus_info_lists_the_largest_statutes_first():
+    """A cap that kept an arbitrary slice would hide the Penal Code behind an Act with
+    one section."""
+    rows = [
+        {
+            "statute": "SMALL",
+            "unit": "section",
+            "number": "1",
+            "heading": "Only",
+            "text": "One provision.",
+            "in_force_from": "2000-01-01",
+        }
+    ] + [
+        {
+            "statute": "BIG",
+            "unit": "section",
+            "number": str(n),
+            "heading": f"Heading {n}",
+            "text": f"Provision {n}.",
+            "in_force_from": "2000-01-01",
+        }
+        for n in range(5)
+    ]
+    info = LawServer(build(rows), "fixture").corpus_info({})
+    assert [s["statute"] for s in info["statutes"]] == ["BIG", "SMALL"]

@@ -26,6 +26,7 @@ import re
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Container, Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from .corpus import Corpus, Provision
 
@@ -379,8 +380,21 @@ _SUFFIXES = (
 )
 
 
+@lru_cache(maxsize=1 << 18)
 def _stems(term: str) -> set[str]:
-    """`term` and the stems it could share with a differently inflected form."""
+    """`term` and the stems it could share with a differently inflected form.
+
+    Memoised because a statute book says the same words over and over. Building the
+    index for one date over the 30,131-provision federal corpus called this 5,959,079
+    times and spent 89 seconds in it, 30 of them inside `str.endswith` alone, over a
+    vocabulary two orders of magnitude smaller than the call count. Retrieval is always
+    as of a date and each date builds its own index, so that cost was paid again for
+    every date asked about: three questions about three dates took two minutes.
+
+    The returned set is SHARED between callers and must not be mutated. `expand` used to
+    build on it with `|=`, which would have poisoned the cache for every later caller of
+    that word; it copies now.
+    """
     out = {term}
     if not term.isascii() or not term.isalpha():
         return out
@@ -523,7 +537,9 @@ def expand(term: str) -> set[str]:
     became a synonym for s.302's. An independent review asked for the punishment for
     qatl-i-khata and was told s.302 at coverage 1.00, with no refusal.
     """
-    forms = _stems(term)
+    # Copied: `_stems` is memoised and its set is shared, so building on it in place
+    # would hand every later caller of this word the union computed here.
+    forms = set(_stems(term))
     # Only stems of the word asked are vocabulary keys ("murders" -> "murder"). Terms
     # the vocabulary produced are not asked again.
     for stem in _stems(term):
@@ -541,9 +557,27 @@ def expand(term: str) -> set[str]:
 _FOLD = re.compile(r"[’'‐-―-]")
 
 
+@lru_cache(maxsize=1 << 18)
 def _fold(token: str) -> str:
+    """Memoised for the same reason as `_stems`, and it is the larger of the two.
+
+    One index build over the federal corpus ran this 18,354,956 times - once per token
+    of every provision - and spent 13 seconds in `re.sub` alone. A string is immutable,
+    so the cached value cannot be altered by a caller.
+    """
     folded = _FOLD.sub("", token)
     return folded or token
+
+
+def _without_stopwords(tokens: list[str], defined: Container[str] | None) -> list[str]:
+    """The filter `tokenise` applies, over a list already tokenised.
+
+    One rule, written once: a caller that holds the unfiltered tokens gets the filtered
+    ones without a second pass over the text. `tokenise` below is the definition and
+    calls this, so the two cannot disagree.
+    """
+    keep = defined or ()
+    return [t for t in tokens if t not in LEGAL_STOPWORDS or t in keep]
 
 
 def tokenise(
@@ -570,8 +604,7 @@ def tokenise(
     tokens = [_fold(t.lower()) for t in _TOKEN.findall(text)]
     if keep_stopwords:
         return tokens
-    keep = defined or ()
-    return [t for t in tokens if t not in LEGAL_STOPWORDS or t in keep]
+    return _without_stopwords(tokens, defined)
 
 
 #: How much rarer the question's rarest word has to be than its next-rarest before
@@ -877,26 +910,35 @@ class BM25Index:
         }
 
         for provision in self.documents:
+            # Each of these used to be tokenised where it was needed: the text three
+            # times over and the heading twice, six passes of the tokeniser per
+            # provision where two distinct results exist. Over the 30,131-provision
+            # federal corpus that was 253,540 calls and 50 seconds of the index build.
+            #
+            # The filtered form is the unfiltered one with stopwords dropped, so both
+            # come from one pass. `tokenise(..., defined=)` still exists and still
+            # defines the rule; this applies the same rule to a list already in hand.
+            text_words = tokenise(provision.text, keep_stopwords=True)
+            heading_words = tokenise(provision.heading, keep_stopwords=True)
+            text_tokens = _without_stopwords(text_words, self._defined_terms)
+            heading_tokens = _without_stopwords(heading_words, self._defined_terms)
+
             tokens = (
-                tokenise(provision.text, defined=self._defined_terms)
-                + tokenise(provision.heading, defined=self._defined_terms) * int(self.heading_boost)
+                text_tokens
+                + heading_tokens * int(self.heading_boost)
                 # The number is repeated so term frequency carries the boost, rather
                 # than bolting a separate score on afterwards.
                 + [provision.number.lower()] * int(self.number_boost)
             )
             self._tokens.append(tokens)
             where: dict[str, list[int]] = {}
-            for position, token in enumerate(tokenise(provision.text, defined=self._defined_terms)):
+            for position, token in enumerate(text_tokens):
                 where.setdefault(token, []).append(position)
             self._positions.append(where)
-            self._heading_tokens.append(
-                set(tokenise(provision.heading, defined=self._defined_terms))
-            )
+            self._heading_tokens.append(set(heading_tokens))
             # Stopwords kept here and nowhere else: this set answers "is the word in
             # the corpus at all", not "can it rank a provision".
-            for word in tokenise(provision.text, keep_stopwords=True) + tokenise(
-                provision.heading, keep_stopwords=True
-            ):
+            for word in text_words + heading_words:
                 self._text_stems.update(_stems(word))
             frequencies = Counter(tokens)
             self._frequencies.append(frequencies)
