@@ -1,128 +1,41 @@
-<h1 align="center">pak-law-assistant (Python · BM25 · temporal validity graph)</h1>
-<p align="center"><i>Legal question answering over Pakistani statutes that will not cite a repealed provision</i></p>
+# pak-law-assistant
 
 <!-- mcp-name: io.github.hammasbuilds/pak-law-assistant -->
 
-<p align="center">
-  <a href="#the-failure-this-exists-to-prevent">The failure it prevents</a> &middot;
-  <a href="#nine-refusal-conditions">Nine refusals</a> &middot;
-  <a href="#citation-parsing">Citation parsing</a> &middot;
-  <a href="#why-bm25-and-not-embeddings">Why BM25</a> &middot;
-  <a href="#amendment-history-is-often-the-question-itself">Amendment history</a> &middot;
-  <a href="#install">Install</a> &middot;
-  <a href="#as-an-mcp-server">MCP server</a> &middot;
-  <a href="#problems-hit-while-building-this">Problems hit</a>
-</p>
+Question answering and citation checking over Pakistani federal statutes that will not cite a provision that was not
+in force on the date asked about. We built it for lawyers, law students, legal-tech developers and AI assistants
+that need statute text they can rely on: every provision carries the dates it was in force, every question is
+answered *as of a date*, and when the corpus cannot support an answer it refuses and says why. It runs as a local
+web page, a Python library and an MCP server, with zero dependencies, over our dataset of the whole federal statute
+book (30,174 provisions from 970 Acts).
 
-<p align="center">
-  <a href="https://github.com/hammasbuilds/pak-law-assistant/actions/workflows/ci.yml"><img src="https://github.com/hammasbuilds/pak-law-assistant/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
-  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="python">
-  <img src="https://img.shields.io/badge/dependencies-zero-success" alt="deps">
-  <img src="https://img.shields.io/badge/retrieval-BM25-336791" alt="retrieval">
-  <img src="https://img.shields.io/badge/MCP-stdio%20server-7c3aed" alt="mcp">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license"></a>
-</p>
+**Dataset:** [Pakistan Federal Statute Book, Dated by Provision](https://www.kaggle.com/datasets/muhammadhammas13/pakistan-federal-statute-book) on Kaggle.
 
----
+## What it does
 
-## Interface
+- **Answers as of a date.** "What is the punishment under section 20 PECA?" asked about 2018 and about 2026 gets the
+  text in force on each date. Superseded text is kept, not deleted, so questions about past conduct are answered
+  against the law as it then stood.
+- **Refuses rather than guesses**, in nine named ways (below), each returned as a `refusal_status` token as well as
+  prose.
+- **Reads citations the way Pakistani lawyers write them**: `Section 302 PPC`, `s. 302 of the Pakistan Penal Code`,
+  `sec 302, P.P.C.`, `§302 PPC`, `302-B`, `u/s 302`, `sections 302/34 PPC`, `Order XXXIX Rule 1 CPC`, SROs, PLD and
+  SCMR reports, and Urdu or Roman Urdu forms (`دفعہ 302 تعزیرات پاکستان`, `dafa 302 PPC`). `Rs. 500` is not
+  section 500.
+- **Checks every citation in a draft** against the law on its date: `in_force`, `amended_since`, `not_in_force`,
+  `not_yet_in_force`, `unknown_provision`, `no_act_named`, `act_not_recognised` (usually another country's Act),
+  `statute_not_loaded`, `not_checkable` or `before_record`, with a verdict that says `all_in_force` only when every
+  citation was actually checked.
+- **Gives amendment history and word-level diffs** between the text on two dates.
+- **Retrieves with BM25**, not embeddings: legal terms of art must match, and "these terms matched with these
+  weights" is an explanation a lawyer can check. Section numbers are kept as tokens and boosted, a match must cover
+  more than half of the question's content words, and term proximity separates provisions that cover it equally.
+- **Validates the corpus before serving**: overlapping versions, gaps and more than one live version are refused at
+  load, so an answer never depends on iteration order.
+- **Builds corpora** from an Act's official text (`paklaw-corpus`), and `scripts/build_corpus.py` rebuilds the whole
+  statute book from the Pakistan Code.
 
-![The demo interface](docs/interface.png)
-
-A local front end over the server: pick a scenario, paste or drop a draft, or call any of
-the eight tools directly. Python `http.server` and one HTML file — no framework, no build
-step, no npm. It starts `python -m paklaw.mcp_server` and speaks the protocol to it, so
-every answer on the page arrived through a real `tools/call`.
-
-Kept outside the package deliberately: `pak-law-assistant` installs with zero dependencies
-and no web surface. The call console in [`observability/`](observability) is the other
-page, and it ships here.
-
-## Install
-
-No dependencies, so nothing to resolve:
-
-```bash
-pip install -e .          # or: uvx pak-law-assistant  (once released)
-paklaw-mcp --check        # the MCP server answers, on a 3-provision sample
-
-# the federal statute book, 30,174 provisions - from Kaggle, or built with
-# scripts/build_corpus.py, then pointed at from anywhere
-PAKLAW_CORPUS=/path/to/pakistan-code.jsonl.gz paklaw-mcp --check
-```
-
-Add it to an MCP client — Claude Code, or anything that speaks the protocol:
-
-```json
-{
-  "mcpServers": {
-    "pak-law": {
-      "command": "paklaw-mcp",
-      "env": { "PAKLAW_CORPUS": "/path/to/statutes.jsonl" }
-    }
-  }
-}
-```
-
-Without `PAKLAW_CORPUS` it runs on a three-provision demonstration sample and says so in
-every result. Build a real corpus with `paklaw-corpus import`; the full walk-through is in
-[Run it yourself](#run-it-yourself).
-
-## The failure this exists to prevent
-
-```mermaid
-flowchart LR
-    Q["legal question"] --> R["BM25 retrieval<br/>over a temporal corpus"]
-    R --> C["parse the citations"]
-    C --> T{"was this provision<br/>in force at the relevant date?"}
-    T -->|"repealed"| X["REFUSE"]
-    T -->|"in force"| G["citation-grounded answer"]
-    G --> F{"nine refusal conditions"}
-    F -->|"any triggered"| X
-    F -->|"none"| A["answer, with citations"]
-
-    style X fill:#dc2626,color:#fff
-    style A fill:#16a34a,color:#fff
-```
-
-**Citing a repealed provision is worse than refusing to answer.** The corpus is temporal,
-so "what does the law say" is always resolved as "what did the law say *on this date*".
-
-
-Ask a normal RAG system *"what is the punishment under section 20 PECA?"* and it
-retrieves the text of section 20, which is confident, specific, correctly cited — and
-possibly describes a provision that was **substituted in 2022**.
-
-A repealed section reads exactly like a live one. Nothing in the text says otherwise.
-Only the corpus knows, and only if it was built to.
-
-That is worse than refusing, because a refusal makes someone check and a confident
-citation does not. Here is the same question, twice:
-
-```python
-assistant.answer("punishment under section 20 PECA", as_of="2026-09-11")
-→ Section 20 PECA  (2022-02-20 → current)
-  "...imprisonment which may extend to five years."
-
-assistant.answer("punishment under section 20 PECA", as_of="2018-01-01")
-→ Section 20 PECA  (2016-08-19 → 2022-02-20)
-  "...imprisonment which may extend to three years."
-```
-
-**A flat corpus answers both identically, and one of those answers is wrong.**
-
-Every provision carries the dates it was in force. Retrieval is always *as of* a date —
-there is no way to search without supplying one, because an optional date parameter
-gets a default and the default eventually gets used for a question where it is wrong.
-
-Superseded text is **retained, not deleted**. Questions about past conduct are asked
-against the law as it then stood, and deleting history makes those unanswerable.
-
-## Nine refusal conditions
-
-Each exists because the alternative is an answer that is confident and wrong. The first
-four were the original design; the last five were added after independent reviews got a
-wrong answer out of each of them.
+### Nine refusal conditions
 
 | | What it prevents | `refusal_status` |
 |---|---|---|
@@ -136,148 +49,187 @@ wrong answer out of each of them.
 | **Subject not in corpus** | Answering "dacoity with murder" from the nearest provision when the corpus holds nothing on dacoity | `subject_not_in_corpus` |
 | **Citation unreliable** | Citing s.57 for a rule that is really s.65, because the source's contents list stopped before its body did | `citation_unreliable` |
 
-Every refusal carries `refusal_status` as well as prose, so a client can branch on the
-kind without matching on wording that will be reworded.
+Every refusal carries `refusal_status` as well as prose, so a client can branch on the kind without matching on
+wording.
 
-A question that **names** a provision is a lookup, not a search. Returning the nearest
-match to a citation the user spelled out is how a system answers about the wrong law.
+## Screenshots
 
-## Citation parsing
+The local web page (`run.bat`, or `paklaw-web`) over the full statute book.
 
-Legal writing is citation-dense and precise, and the same provision appears in many
-written forms. They must all resolve to one key, or retrieval silently treats them as
-different provisions:
+![Asking about theft](docs/screenshots/01-ask-theft.png)
+*Input: "What is the punishment for theft?" as of 1 January 2024. Output: section 14 of the Offences Against Property
+(Enforcement of Hudood) Ordinance 1979 and section 379 PPC, each with its Act, the date it came into force, "still in
+force", the statute text and the terms that matched.*
+
+![Refused before it was in force](docs/screenshots/02-refused-before-in-force.png)
+*Input: "Section 20 of PECA" as of 1 June 2015. Output: refused, because section 20 PECA was not yet in force on that
+date (it commenced on 18 August 2016); the notes on statutes this corpus does not record that far back are folded.*
+
+![Checking a draft](docs/screenshots/03-check-draft.png)
+*Input: an uploaded notice citing section 154 CrPC, sections 420 and 489F PPC, Article 10A of the Constitution and
+section 37 of the Indian Penal Code. Output: four citations in force with their headings, and the Indian Penal Code
+citation flagged "Act not held here" rather than read as a Pakistani section.*
+
+![Phone, dark theme](docs/screenshots/04-phone-dark.png)
+*"What is the punishment for murder?" as of 1 June 2024, limited to the PPC, at 390 px in the dark theme: section 302
+PPC with its dates and text.*
+
+## Sample input / output
+
+`python demo.py` runs on a three-provision sample that carries PECA s.20 before and after its 2022 substitution
+(also rendered as [input.png](docs/images/input.png) and [output.png](docs/images/output.png)):
 
 ```
-Section 302 PPC   ·   s. 302 of the Pakistan Penal Code   ·   sec 302, P.P.C.   ·   §302 PPC
-                            →  all four:  PPC:section:302
+INPUT
+   corpus             3 provisions, 4 versions (PECA s.20 twice: pre- and post-2022)
+   as_of 2026-01-01   "What is the penalty for publicly transmitting false inform..."
+   as_of 2020-06-01   "What is the penalty for publicly transmitting false inform..."
+   as_of 2026-01-01   "What are the registration requirements for a private limit..."
+
+OUTPUT
+   [1] asked about 2026-01-01
+       Section 20 PECA
+       in force   2022-02-20 -> present
+       ...shall be punished with imprisonment which may extend to five years or with fine which may extend to ten million rupees or with both.
+
+   [2] the same question, asked about 2020
+       Section 20 PECA
+       in force   2016-08-19 -> 2022-02-20
+       ...shall be punished with imprisonment which may extend to three years or with fine which may extend to one million rupees or with both.
+
+   [3] nothing in the corpus covers this
+       REFUSED    no provision in this corpus contains a word the question turns on, in any form: 'company', 'limited', 'private', 'registration', 'requirements' appear in no provision here, and nothing else in the question matched either.
 ```
 
-Three families, because Pakistani legal argument uses all three:
+The same sentence asked about two dates gets three years and one million rupees, or five years and ten million.
 
-| | Example |
+## Results
+
+### The dataset
+
+We built the dataset this runs on: **30,174 provisions from 970 Acts** of the Pakistan Code, 7.7 MB compressed,
+each with the dates it was in force and the Act it came from. The Ministry's index lists 1,034 Acts; 3 files are
+missing at source, 48 are scanned images with no text layer, 10 yield no provisions, and the rest are here.
+
+| | |
 |---|---|
-| **statutory** | `Section 302 PPC`, `Article 25 of the Constitution`, `Order XXXIX Rule 1 CPC` |
-| **subordinate** | `SRO 1125(I)/2011` |
-| **reported** | `PLD 2015 SC 401`, `2019 SCMR 1234` |
+| Commencement read from the Act's own header | 891 of 970 Acts (91.9%) |
+| Acts the index records as repealed | 39, their provisions dated and flagged |
+| Repeals whose exact day the source does not give | recorded with `end_known: false` |
+| Provisions named in an Act's contents but not imported | 0.9% |
 
-Reported citations matter because a statute's *meaning* frequently lives in the case law
-rather than the text. `Order XXXIX Rule 1` parses as **one** citation, not two — civil
-procedure is cited by Order and Rule, and splitting it makes the count of authorities in
-an answer wrong.
+### Retrieval quality
 
-Urdu and Roman Urdu citations resolve to the same keys: `دفعہ 302 تعزیرات پاکستان`,
-`دفعہ ۳۰۲ تعزیرات پاکستان` (Urdu digits), `dafa 302 PPC` and `آرٹیکل 25 آئین`. Common
-names work too: `Penal Code`, `Criminal Procedure Code`, `ضابطہ فوجداری`.
+```
+$ python tests/bench.py
 
-A bare `section 9` gets **no** statute. Context can supply one explicitly, but it is
-never guessed: attributing a provision to the wrong Act produces something that looks
-exactly like a correct answer.
+RETRIEVAL QUALITY
+======================================================================
+  question set                          n   right  wrong  refused
+  ----------------------------------------------------------------
+  in a person's words                  17      16      0        1
+  paraphrases                          34      29      0        5
+  written later again                  20      15      0        5
+  ----------------------------------------------------------------
+  not in corpus (set 1)                 6       0      0        6
+  not in corpus (set 2)                10       0      0       10
+  not in corpus (set 3)                10       0      0       10
+  in corpus, unanswerable               8       0      0        8
+  ----------------------------------------------------------------
+  105 questions asked: 60 answered correctly, 0 wrong, 34 of 34 correctly refused
+```
 
-## Why BM25 and not embeddings
+`wrong` is the column to read: a refusal costs a reader a lookup, a confident citation of the wrong provision costs
+them the argument. The three answerable sets were written at three different times over 31 real provisions; the
+refusal sets hold 26 subjects the corpus does not hold, plus 8 questions built from the corpus's own words that it
+still cannot answer. These are questions written for this repository, so the 0 describes these 105 questions.
 
-A considered choice for this corpus, not a shortcut.
+Ranking uses **term proximity**, how close together a provision states the words of the question, to separate
+provisions that cover it equally well. Two questions about s.57 PPC ("imprisonment for life shall be reckoned as
+equivalent to imprisonment for twenty-five years") tied at full coverage with s.302, which contains the same words
+in different clauses; the smallest window holding all five words is 6 tokens in s.57 and 21 in s.302. The weight
+(0.5) sits in the middle of the plateau a sweep over the 105 questions found. The same change fixed
+`"consent of the heirs of the victim"`, which had returned s.55A rather than s.54: the phrase is verbatim in the
+provisos of s.54 and s.55 and in the body of s.55A.
 
-- **Legal text is terminology-bound.** *"Reasonable apprehension of death"* is a term of
-  art. A semantically similar paraphrase is a different provision, and retrieving it is
-  a wrong answer. Embeddings are good at paraphrase — the wrong strength here.
-- **It is inspectable.** Asked why a provision was returned: *"these terms matched with
-  these weights"* is an answer a lawyer can check. *"It was close in a 384-dimensional
-  space"* is not, and in a domain where reasoning must be auditable that decides it.
+The refusals cost recall: that is 11 refusals of 71 answerable questions against no wrong answer. `python tests/bench.py --ablate` removes the rule and prints both sides:
 
-Section numbers are kept as tokens — `302` is among the most discriminating terms in a
-penal code — and boosted, so matching a number outranks matching prose. Legal stopwords
-(`shall`, `section`, `act`, `person`, `whoever`, `commits`) are dropped, since nearly
-every provision contains them, and so are question words (`what`, `can`, `my`).
+```
+                          right  wrong  refused  answered anyway
+  as shipped                 60      0       11                0
+  rule removed               65      1        5               22
+```
 
-**A match must cover the question, not just score.** The nearest provision is refused
-unless it contains more than half of the question's content words. With a score
-threshold alone, *"Whoever commits theft"* was answered with the murder section, on
-the strength of two words every penal provision contains. The refusal names the words
-that were missing.
+`tests/test_clause_population.py` builds a set nobody chose (the first nine words of each provision's first clause):
+31 questions, 30 right, 1 wrong, 0 refused.
 
-## Amendment history is often the question itself
+## Tech stack
+
+- Python 3.10+, standard library only: BM25 retrieval, citation parser, temporal corpus, audit and diff are all in
+  `src/paklaw`
+- MCP server: the stdio transport implemented directly (newline-delimited JSON-RPC 2.0), eight read-only tools with
+  declared `outputSchema`s, no SDK
+- Web page: `http.server` (`ThreadingHTTPServer`, 127.0.0.1 only) and one HTML file with vanilla JavaScript, light
+  and dark themes, no build step
+- Corpus builder: `scripts/build_corpus.py` (Pakistan Code index, PDF text via `pdftotext`) and the `paklaw-corpus`
+  CLI
+- pytest, ruff and jsonschema (dev only); hatchling for the build; CI on Python 3.10-3.13
+
+## Run it
+
+```bash
+git clone https://github.com/hammasbuilds/pak-law-assistant
+cd pak-law-assistant
+pip install -e .          # no dependencies
+python demo.py            # the library, on the bundled sample
+python demo_mcp.py        # the same questions through the MCP server
+pytest -q                 # needs pytest, ruff and jsonschema: uv sync --all-groups
+```
+
+The full statute book is [on Kaggle](https://www.kaggle.com/datasets/muhammadhammas13/pakistan-federal-statute-book).
+Save it as `data/pakistan-code.jsonl.gz` (or anywhere, and set `PAKLAW_CORPUS` to its path); without it everything
+runs on a three-provision sample with illustrative wording and says so in every result.
+
+### The web page
+
+```bash
+paklaw-web                                   # http://127.0.0.1:8841/, opens a browser tab
+run.bat --port 8841 --no-browser             # Windows, from the repo folder
+paklaw-web --corpus path/to/statutes.jsonl   # another corpus
+```
+
+Ask a question with the date it is about (and optionally one statute), or paste or upload a draft to check its
+citations. An answer over the full corpus takes a few seconds on a laptop CPU.
+
+### From Python
 
 ```python
-assistant.history("section 20 PECA")
-# {"versions": 2, "currently_in_force": True,
-#  "history": [{"from": "2016-08-19", "to": "2022-02-20",
-#               "manner": "substituted", "amended_by": "Ordinance II of 2022"},
-#              {"from": "2022-02-20", "to": None, "manner": "in force"}]}
+from paklaw import LawAssistant
+from paklaw.mcp_server import load_corpus
+
+corpus, _ = load_corpus("data/pakistan-code.jsonl.gz")
+assistant = LawAssistant(corpus=corpus)
+print(assistant.answer("What is the punishment for theft?", as_of="2024-01-01").render())
+print(assistant.history("section 20 PECA"))
 ```
 
-*"When did this change?"* is asked constantly — about conduct that occurred before an
-amendment, about which version governs a pending case — and it is **unanswerable from a
-flat corpus**.
+### As an MCP server
 
----
-
-## Input
-
-![input](https://raw.githubusercontent.com/hammasbuilds/pak-law-assistant/main/docs/images/input.png)
-
-## Output
-
-`python demo.py`
-
-![output](https://raw.githubusercontent.com/hammasbuilds/pak-law-assistant/main/docs/images/output.png)
-
-*Questions 1 and 2 are the same sentence. The only difference is the date they are about,
-and it changes the answer from five years and ten million rupees to three years and one
-million. A flat corpus returns one of these and cannot tell you which. Question 3 is
-refused rather than answered from the nearest-looking provision.*
-
----
-
-## As an MCP server
-
-The same library, exposed to Claude Desktop, Claude Code or any other
-[Model Context Protocol](https://modelcontextprotocol.io) client as **eight read-only
-tools**. It still has zero dependencies: the server implements the stdio transport
-directly (newline-delimited JSON-RPC) instead of pulling in an SDK. Every tool was called once by hand
-through the official Python SDK client (`mcp` 2.2.0) — that interop check was a person
-at a terminal, not a test, and nothing here re-runs it; `mcp` is in no dependency group
-and would not be, since the point is to need no SDK. What the suite does is drive the
-server byte by byte over a pipe — including as a real subprocess, and including a check that
-each tool's structured result matches the `outputSchema` it declares.
+The same library as eight read-only tools for Claude Desktop, Claude Code or any
+[Model Context Protocol](https://modelcontextprotocol.io) client. Every date argument is required, there is no raw
+search tool (only `answer_question`, which can refuse), a refusal is a normal result, and a bad argument such as
+`as_of="last year"` is a tool error that names the format.
 
 | Tool | Use it for |
 |---|---|
 | `answer_question` | "what does the law say about X *on this date*": provision text with citations, or one of the nine refusals |
-| `check_citations` | **auditing a draft** (a brief, a notice, or a model's own answer). Every citation gets a status for the date: `in_force`, `amended_since`, `not_in_force`, `not_yet_in_force`, `unknown_provision`, `no_act_named`, `act_not_recognised` (an Act this corpus does not hold, which is usually another country's), `statute_not_loaded`, `not_checkable` or `before_record` (dated before the corpus starts recording that statute), plus its character offset |
+| `check_citations` | auditing a draft (a brief, a notice, or a model's own answer): a status for every citation on the date, plus its character offset |
 | `provision_history` | "when did section 20 change?": every version, how each one ended, and the instrument on each side |
 | `compare_versions` | "what did the amendment do?": a word-level diff between the text on two dates |
 | `list_provisions` | a statute's table of contents on a date, in statute order (2 < 10 < 10A), paged |
 | `changes_between` | every commencement, substitution, omission and repeal in a period |
-| `parse_citations` | turns `s. 302 of the Pakistan Penal Code`, `§302 PPC` and `sec 302, P.P.C.` into one key; handles Order/Rule, SROs, PLD/SCMR/CLC. Needs no corpus |
+| `parse_citations` | turns `s. 302 of the Pakistan Penal Code`, `§302 PPC` and `sec 302, P.P.C.` into one key; needs no corpus |
 | `corpus_info` | what is loaded, so the model knows what it *cannot* answer |
-
-Choices that make it more than a thin wrapper:
-
-- **Every date is required.** The Python API defaults `as_of` to today. A model calling a
-  tool leaves optional arguments empty, and the questions that most need a past date
-  (conduct before an amendment) are exactly the ones where today is wrong.
-- **There is no search tool.** Raw BM25 hits are always the *nearest* provisions, relevant
-  or not, and a model handed a ranked list cites the top one. The only route to retrieval
-  is `answer_question`, which can refuse.
-- **`check_citations` reports `all_in_force` only if every citation was actually checked.**
-  The verdict is `problems` (something cited was not law on the date), then `review`
-  (a citation was good law on the date but has been amended since, so the draft may be
-  quoting the later words), then `unverified` (case law, SROs, an Act that isn't loaded,
-  or no citations at all), and only then `all_in_force`.
-- **Citations are read the way Pakistani lawyers write them:** `302-B`, `489-F`, `u/s 302`,
-  `sections 302/34 PPC`, `302 PPC`, `Article 17 QSO`. They are also *not* read where they
-  aren't: `Rs. 500` is not section 500, and `Part 3` is not Article 3.
-- **A citation that can't be answered is named, never dropped.** Ask about three sections
-  and get one, and the other two appear in `warnings` with the reason.
-- **Big results are paged** (`offset` and `next_offset`, with `total` always the full
-  count), inputs are capped at 200,000 characters, and a 10,000-version corpus answers
-  `changes_between` in well under a second.
-- **A citation to a subsection finds its section.** `section 20(1) PECA` returns all of
-  section 20 with a note saying so, rather than being refused as unknown.
-- **A refusal is a normal result** (`refused: true`), so the model treats it as the
-  answer. A bad argument such as `as_of="last year"` comes back as a tool error that
-  names the format, so the model can correct it and retry.
 
 `python demo_mcp.py` starts the server and calls it over stdio:
 
@@ -312,12 +264,6 @@ Choices that make it more than a thin wrapper:
 [7] answer_question(as_of='last year')   -- a date the model got wrong
     TOOL ERROR  as_of must be a date as YYYY-MM-DD, got 'last year'
 ```
-
-*Call 6 is the case the audit exists for.* The draft is about conduct in 2019 but quotes
-"up to five years", which is the post-2022 penalty. The citation itself was valid in
-2019, so a check that only asks whether section 20 existed would pass it. The audit
-gives it its own status, `amended_since`, and it would hold the verdict at `review` even
-if the other citations were clean.
 
 ### Connect it
 
@@ -371,7 +317,7 @@ has been done, which is why the order is written here.
 
 ### Building a corpus: `paklaw-corpus`
 
-No statute text ships with this repo (see [Limits](#limits)). `paklaw-corpus` builds a
+No statute text ships with this repo (the full statute book is on Kaggle). `paklaw-corpus` builds a
 corpus from an Act's official text and records amendments. It checks that every
 version's dates line up, so a corpus the server would refuse is never written.
 
@@ -420,68 +366,10 @@ whole provisions, and a separately stored subsection would sit beside the stale 
 Any Act can be loaded, not just the thirteen the citation parser knows by name. A corpus
 holding `PRPA` makes `section 5 PRPA` parse, answer and audit like any other.
 
-### The corpus file
+### Rebuilding the dataset
 
-A JSON array, or JSON Lines, of provisions with the same fields as `Provision`:
-
-```json
-{"statute": "PECA", "unit": "section", "number": "20", "heading": "Offences against dignity of a natural person",
- "text": "Whoever intentionally and publicly ...", "in_force_from": "2016-08-19", "in_force_to": "2022-02-20",
- "manner": "substituted", "amended_by": "Ordinance II of 2022"}
-```
-
-`amended_by` is the instrument that **ended** a version, paired with `manner`.
-`enacted_by` is the instrument that **began** one. They are different fields because
-reading one as the other attributes a 2016 commencement to a 2022 ordinance, which is a
-bug this repo actually had (see below).
-
-The file is **validated before the server accepts a single request**. If versions
-overlap, leave a gap, or more than one is live, the server refuses to start and lists
-every problem, because otherwise the answer would depend on which version it happened to
-read first. An unknown field such as a typo'd `sectoin` names the row it is in.
-`paklaw-mcp --check statutes.jsonl` loads and validates a file, prints what it covers, then exits.
-
-Without `PAKLAW_CORPUS`, the server runs on a **three-provision sample** with
-illustrative, unofficial wording, and every result carries a `corpus_warning` saying so.
-
-### The dataset: the federal statute book
-
-We built this dataset. **30,174 provisions from 970 Acts**, 7.7 MB compressed, every
-provision carrying the dates it was in force and a line saying which Act it came from.
-
-It is **published on Kaggle** rather than committed here — this package installs with no
-dependencies and a 7.7 MB data file is not part of that. `scripts/build_corpus.py`
-rebuilds it from the source below, and `PAKLAW_CORPUS` points the server at wherever you
-put it.
-
-**Source.** The [Pakistan Code](https://pakistancode.gov.pk/), published by the Ministry
-of Law and Justice, Government of Pakistan. `scripts/build_corpus.py` walks its
-alphabetical index, fetches each Act and turns the published text into dated provisions.
-The Ministry lists 1,034 Acts; 3 of their files are missing at source, 48 are scanned
-images with no text layer, 10 yield no provisions, and the rest are here.
-
-| | |
-|---|---|
-| Commencement read from the Act's own header | 891 of 970 Acts (91.9%) |
-| Acts the index records as repealed | 39, their provisions dated and flagged |
-| Repeals whose exact day the source does not give | recorded with `end_known: false` |
-| Provisions named in an Act's contents but not imported | 0.9% |
-
-**What it is for.** It is the corpus behind this MCP server, and it is built to answer a
-question *as of a date* — so it suits work on temporal retrieval, on citation checking,
-and on refusal behaviour, where the question is not only whether an answer is found but
-whether the system declines when the corpus cannot support one. As a product it gives a
-legal assistant, a drafting checker or a compliance tool a statute book that knows what
-was in force on the day being asked about.
-
-**Using it.** The statute text is the Ministry's and carries the Ministry's own terms.
-The dataset — the splitting into provisions, the in-force dates, the repeal records and
-the structure — is ours, and if you use it in research or in a product, please cite this
-repository. Check anything you rely on against the gazette.
-
-Rebuild it in three resumable stages — the middle one takes about 40 minutes over a
-government site that is the only copy of this text, so both fetch stages skip what is
-already on disk:
+Three resumable stages; the middle one takes about 40 minutes over the government site, and both fetch stages skip
+what is already on disk:
 
 ```bash
 python scripts/build_corpus.py catalogue   # the index   -> catalogue.json
@@ -489,365 +377,13 @@ python scripts/build_corpus.py fetch       # 1,034 Acts  -> pdf/     (433 MB, ou
 python scripts/build_corpus.py build       # pdf/        -> corpus.jsonl
 ```
 
-`scripts/build_corpus.py build` writes a report naming every Act it left out and why,
-every provision an Act's contents list names that did not make it, and every span it
-dropped for running away. Nothing is dropped silently.
+`build` writes a report naming every Act it left out and why, and every provision an Act's contents list names that
+did not make it.
 
-Two refusals in the importer are deliberate. An Act whose header carries no date keeps
-the year from its title with `start_known: false` rather than a date invented to the day,
-because a guessed commencement answers "what was the law on 3 March 1997" with an Act
-that had not yet been passed. And an Act the index annotates as repealed is dated from
-that note — unread, every provision of all 86 such Acts is served as the law in force
-today, which is the failure this whole package exists to prevent.
+## Licence
 
----
-
-## Corpus validation
-
-`corpus.validate()` catches the structural faults that produce wrong answers silently:
-overlapping versions (retrieval returns whichever it reaches first, so results are not
-reproducible), a version that never ends while another begins, gaps in force, and more
-than one live version of a provision.
-
-## Tests
-
-**No dependencies, no corpus download, and no number quoted here** — this paragraph
-has said 49, then 226, then 280, each of them true for about a day. `pytest -q` and the
-CI badge are the record. What the suite covers:
-
-| Area | What it holds |
-|---|---|
-| the library | retrieval, answering, the nine refusal conditions |
-| the MCP server | the protocol over a pipe, and a check that every tool's `structuredContent` matches its declared `outputSchema` on every path, refusals included. Also the handshake: `structuredContent` and `outputSchema` arrived in protocol 2025-06-18, so a call before `initialize` used to be answered in the degraded 2024 shape rather than refused - a client that skipped the handshake got a worse answer and no way to tell why. It is now a -32002, and the test that found it compares the two shapes |
-| corpus building | the importer against real statute layouts from two public sources |
-| record coverage | what the corpus does and does not claim to know |
-| retrieval quality | **three question sets over 31 real provisions, written at three different times**, 26 subjects the corpus does not hold, and 8 questions built from the corpus's own words that it still cannot answer. `python tests/bench.py` prints the table (below), so the figures here have a producer rather than being asserted as floors in a test and written out by hand. The later sets exist because a benchmark of 17 sentences is a claim about 17 sentences: an independent review re-asked the same corpus in its own words and got 8 confident wrong answers. The fourth refusal set exists because the other three all name a subject the corpus has never seen, so every one of them is turned away by the vocabulary check alone - one gate measured 26 times, and not the hard one |
-| regressions | one per defect an independent review reproduced, each pinned so it cannot come back quietly |
-
-### Retrieval quality
-
-```
-$ python tests/bench.py
-
-RETRIEVAL QUALITY
-======================================================================
-  question set                          n   right  wrong  refused
-  ----------------------------------------------------------------
-  in a person's words                  17      16      0        1
-  paraphrases                          34      29      0        5
-  written later again                  20      15      0        5
-  ----------------------------------------------------------------
-  not in corpus (set 1)                 6       0      0        6
-  not in corpus (set 2)                10       0      0       10
-  not in corpus (set 3)                10       0      0       10
-  in corpus, unanswerable               8       0      0        8
-  ----------------------------------------------------------------
-  105 questions asked: 60 answered correctly, 0 wrong, 34 of 34 correctly refused
-```
-
-`wrong` is the only column that matters. A refusal costs a reader a lookup; a confident
-citation of the wrong provision costs them the argument.
-
-**And `0` is a property of these 105 questions, not of the system.** Every set above was
-written for this repository, which is the one thing they have in common and the thing a
-number cannot disclose about itself. An independent review wrote its own questions over
-the same corpus and measured something else: of 24 unanswerable questions phrased in the
-corpus's own vocabulary, **16 were answered**; of 38 answerable ones, **27 right, 1
-wrong, 10 refused** - a 26% refusal rate against the 15% here. Nothing in the code
-differed between those two measurements.
-
-Two of those gaps have since been closed and are in the suite - a question whose
-distinctive word the answering provision does not contain is now refused
-(`Hit.missing_key_term`), and a refusal no longer claims a word is absent when the
-corpus holds another form of it. The rest is the honest caveat: a set you wrote is a set
-you can pass.
-
-`tests/test_clause_population.py` is the attempt at a population nobody chose. The rule
-is "the first nine words of each provision's first clause", which generates 31 questions
-over the same corpus: **30 right, 1 wrong, 0 refused**. The one mistake is
-`"in every case in which sentence of imprisonment for"` - the opening of PPC s.55, and
-also of s.60 and s.64, cut before the word that separates them - and s.55 is served
-among the three passages. A generated set has its own bias, which is the generator's;
-what it cannot have is a preference for questions the system answers.
-
-The column was 1 until the ranking learned about **term proximity**: how close together
-a provision says the words of the question, used to separate provisions that cover it
-equally well. Two questions about s.57 PPC - "imprisonment for life shall be reckoned as
-equivalent to imprisonment for twenty-five years" - were answered with s.302, the
-death-penalty provision, because a 51-token provision about punishment for murder
-happens to contain *imprisonment*, *life*, *twenty*, *five* and *years* in different
-clauses, so coverage tied at 1.00 and BM25 then preferred s.302 for being shorter. The
-smallest window containing all five words is **6 tokens in s.57 and 21 in s.302**: the
-provision that states the proposition says it in one clause, and the one that does not
-scatters it. The weight was swept over these 105 questions - 0 reproduces the old
-ranking at 56 right and 1 wrong, 0.25 to 0.75 all give 57 and 0, and 1.0 upward starts
-overriding coverage's intent - so it is 0.5, the middle of the plateau.
-
-It also fixed the one the table already had: `"consent of the heirs of the victim"`
-returned s.55A rather than s.54, because that phrase is verbatim in the provisos of s.54
-and s.55 and in the body of s.55A.
-
-The refusal population was written here as **20** until this command printed it: it is 26
-across the three sets, and the figure had been copied from one set's size rather than
-counted. The thresholds in `test_retrieval_quality.py` are floors - `right >= 26` - so a
-set whose results had moved would still pass, which is why the table is printed and
-checked against this file rather than maintained by hand.
-
-Run them with
-`uv sync --all-groups` then `uv run pytest`, or `pip install -e . && pip install pytest ruff jsonschema`. CI runs them on Python 3.10 to 3.13, then runs both demos.
-
-| Covered | |
-|---|---|
-| Citations | four written forms → one key, articles, Order+Rule as one, SROs, both law-report orderings, multiple in a sentence, bare sections, subsections |
-| Corpus | version on a date, pre-commencement, **boundary belongs to the new version**, history, superseded text retained, impossible intervals, overlap and multi-live detection |
-| Retrieval | numbers kept, stopwords dropped, Urdu tokens, ranking, **never returns a repealed provision**, past-date retrieval, explainability, non-negative IDF |
-| Answering | **same question, different dates, different answers**, citation lookup vs search, every refusal condition, citation-first rendering, history |
-| Corpus building | splitting an Act, **a numbered line inside a body is not a section**, **an omitted section is a boundary**, chapters, substitution/repeal/insert keep dates consistent, a refused amendment leaves the file untouched, atomic writes, the index cache is shared per amendment interval and bounded |
-| Regressions | every citation form above, off-topic questions refused, unanswered citations named, filter before cut, `amended_since`, row types checked at load, re-enactment, schedules, null id, misspelt argument, internal error as a tool error, input limit, 10,000-version and 10,000-citation timings |
-| Audit | every citation status, `all_in_force` only when everything was checked, amended-after-the-date flagged, repealed-then-reinstated, word-level diff, statute ordering |
-| Second review | the Constitution imported as articles and a sectioned one refused, Urdu and Roman Urdu citations, Urdu digits, common Act names, whitespace input, reversed dates reported, protocol 2025-11-25, `server.json` agrees with the package |
-| MCP server | every tool called through the protocol, every date required in every schema, version negotiation, notifications get no reply, `as_of` required in the schema, refusal is a result and a bad date is a tool error, no infinite score on the wire, a malformed line does not end the session, batches (accepted although MCP dropped them in 2025-06-18; leniency, not a feature to rely on), **stdout carries only protocol**, a bad corpus exits before serving |
-
-## Limits
-
-- **The shipped corpus is consolidated text, not an official publication.** It is the
-  Pakistan Code as the Ministry publishes it, imported automatically. 91.9% of its Acts
-  carry a commencement date read from their own header; the rest keep the year from
-  their title and say so (`start_known: false`). 0.9% of the provisions each Act's own
-  contents list names are not in it. **Check anything you rely on against the gazette.**
-- **A bigger corpus weakens the "that word is nowhere in the statute book" refusal.**
-  Over thirteen provisions, a word the corpus has never seen is a strong signal that the
-  question is not a legal one. Over 30,174 provisions almost every English word appears
-  somewhere. Measured on eight plainly non-legal questions ("how do I bake a chocolate
-  cake?", "how much should I pay for a used car in Lahore?"), the sample refuses all
-  eight and the full corpus refuses four — each of the four answered at a coverage of
-  0.75 or below, while all six legal questions in the same run were answered at 1.0.
-  Setting `PAKLAW_MIN_COVERAGE=0.75` refuses all eight and keeps all six, at the cost of
-  two correct answers on the 105-question fixture set. The default is left at 0.5
-  because 105 questions back it and eight back the other number.
-- A bare `Article 25` is read as the Constitution's, which is what it means in nearly all
-  Pakistani writing. An article of any other instrument has to be named (`Article 17 QSO`).
-- Relevance is lexical, and the refusals cost recall. `meaning` does not reach `denotes`,
-  so "the meaning of animal in this Code" is refused although s.47 ("The word 'animal'
-  denotes…") answers it; and a word the corpus has never seen refuses the whole question,
-  so "does the word animal cover a bird?" is refused because the corpus contains no
-  *bird*, not because it contains no *animal*. Across the three question sets that is 11
-  refusals of 71 answerable questions against no wrong answer — about one in six
-  questions refused that a reader would have answered, to make a wrong citation rare.
-  `python tests/bench.py --ablate` removes the rule and prints both sides:
-
-  ```
-                            right  wrong  refused  answered anyway
-    as shipped                 60      0       11                0
-    rule removed               65      1        5               22
-  ```
-
-  Five more questions answered — and one wrong citation, plus twenty-two answers to
-  questions that name a subject the corpus does not hold. That is the trade, and this
-  repository chooses this side of it. The figures moved when the refusal catch-all was
-  fixed: refusals on answerable questions fell from 14 to 11, and removing the rule now
-  costs a wrong citation where before it cost only over-answering. This paragraph used
-  to quote "three confident wrong citations, two of them s.302" from a review with
-  nothing producing the figure; the command is here so the number is not a
-  recollection.
-- Sections are the unit. A subsection citation returns its whole section, and an amended
-  subsection has to be recorded as a new text of the whole section.
-- Urdu support is tokenisation-level. Full bilingual retrieval needs the Urdu
-  normalisation in [`urdu-nlp-toolkit`](https://github.com/hammasbuilds/urdu-nlp-toolkit)
-  wired into the analyser — the interface is there, the integration is not.
-- Case law is parsed as citations, not ingested as text. Judicial interpretation is
-  frequently where the meaning is, and this retrieves statute only.
-- No synthesis. Answers are provision text with citations attached; the system quotes
-  law, it does not write it. Narrative phrasing belongs on top, given *verified*
-  provisions.
-- Urdu is parsed in citations (`دفعہ 302 تعزیرات پاکستان`) but a question in Urdu prose
-  is only answered when it cites a provision, because the corpus text is English.
-- The MCP server speaks **stdio only**, with no HTTP transport. It is a local tool for
-  one user's client, not a hosted service. It exposes tools only, no resources or
-  prompts, and the corpus is fixed for the life of the process.
-- **This is not legal advice**, and a system that produced fluent legal prose would
-  invite reliance it has not earned. The dry, citation-first output is deliberate.
-
-## Keywords
-
-legal AI &middot; legal question answering &middot; statutory interpretation &middot; Pakistani law &middot; citation parsing &middot; repealed provisions &middot; temporal corpus &middot; point-in-time law &middot; BM25 &middot; retrieval &middot; grounded generation &middot; refusal conditions &middot; amendment history &middot; legal tech &middot; zero dependencies &middot; MCP server &middot; Model Context Protocol &middot; citation checker
-
-## License
-
-MIT
-
----
-
-## Run it yourself
-
-```bash
-git clone https://github.com/hammasbuilds/pak-law-assistant
-cd pak-law-assistant
-
-uv sync --all-groups     # the package has no dependencies; the dev group adds
-                         # pytest, ruff and jsonschema
-pytest -q                # no corpus download, no network
-python demo.py           # the library
-python demo_mcp.py       # the same questions through the MCP server
-```
-
-```python
-from paklaw import Corpus, LawAssistant, Provision
-
-original_text = "... imprisonment which may extend to three years ..."
-amended_text = "... imprisonment which may extend to five years ..."
-
-corpus = Corpus()
-corpus.add(
-    Provision(
-        statute="PECA",
-        unit="section",
-        number="20",
-        heading="Offences against dignity of a natural person",
-        text=original_text,
-        in_force_from="2016-08-19",
-        in_force_to="2022-02-20",
-        manner="substituted",
-        amended_by="Ordinance II of 2022",
-    )
-)
-corpus.add(
-    Provision(
-        statute="PECA",
-        unit="section",
-        number="20",
-        heading="Offences against dignity of a natural person",
-        text=amended_text,
-        in_force_from="2022-02-20",
-    )
-)
-
-print(corpus.validate())  # [] - no overlapping versions, gaps or multiple live versions
-
-a = LawAssistant(corpus=corpus)
-print(a.answer("punishment under section 20 PECA", as_of="2026-09-11").render())
-print(a.answer("punishment under section 20 PECA", as_of="2018-01-01").render())  # differs
-print(a.history("section 20 PECA"))
-```
-
-Loading a corpus is your job, and `paklaw-corpus` does the mechanical part (see
-[Building a corpus](#building-a-corpus-paklaw-corpus)). The demo provisions in the tests
-and the package are **illustrative and not authoritative; do not rely on them.**
-
-## Problems hit while building this
-
-**Provisions were being attributed to no Act at all.** Statute abbreviations were
-normalised by stripping a trailing full stop, which turned the lookup key `p.p.c.` into
-`p.p.c` — not in the table. So `sec 302, P.P.C.` parsed as section 302 of *nothing*,
-while `Section 302 PPC` resolved correctly, and the two forms of one provision were
-treated as different provisions by retrieval. *Fixed* by trying both the dotted and
-undotted forms, with a test asserting four written variants produce one key.
-
-**`Order XXXIX Rule 1 CPC` parsed as two citations.** Civil procedure is cited by Order
-*and* Rule together; splitting it doubles the count of authorities in an answer. *Fixed*
-by consuming matched spans so a more specific pattern wins.
-
-**The first design had an optional `as_of` date.** It defaulted to today, which is
-correct until someone asks about conduct from 2019 and gets today's law, fluently and
-with a correct-looking citation. *Fixed* by making the date mandatory throughout — an
-optional parameter gets a default, and the default eventually gets used for a question
-where it is wrong.
-
-**A refusal gave the wrong enactment date, which only showed up once the MCP server made
-it easy to ask.** When asked about section 20 PECA as of 2015, it refused correctly, but
-said the section *"commenced 2022-02-20"*. It was enacted in 2016, and 2022 is when it was
-substituted. The refusal always described the *latest* version, which is wrong for any
-date before the first one. The dates in a refusal are often what a lawyer checks next, so
-a wrong one there does the same harm as a wrong citation. *Fixed* by describing the
-version nearest the date asked about, with a test for the pre-enactment case.
-
-**Citing a subsection was refused as "not in this corpus".** `section 20(1) PECA` became
-the key `PECA:section:20(1)`, and a corpus stores whole sections, so every subsection
-citation (which is most of them in real legal writing) was refused while section 20 sat
-right there. This had been in the library since the start and only showed up once the
-MCP server made it easy to ask odd questions. *Fixed* by falling back from a subdivision
-to its enclosing section, with a warning saying the whole section was returned.
-
-**The importer swallowed omitted sections into the section before them.** `4. [Omitted by
-the Amendment Act, 2020.]` has no heading dash, so it wasn't a heading. That also meant
-it wasn't a boundary, and section 3's text ended with it. *Fixed* by treating
-omitted/repealed markers as boundaries in their own right and reporting them for dates
-to be recorded by hand.
-
-**And it swallowed nine sections where the contents list stopped.** The Pakistan Code
-excerpt in the fixtures is three pages: its CONTENTS ends at s.57 and its text runs on
-to s.66, so ss.58-66 were folded into s.57's body. That was detected and reported -
-`swallowed_headings`, and a warning on every answer citing s.57 - and reporting it was
-the whole remedy for two rounds. It cost a citation: s.57 became 1,800 characters
-holding ten provisions, BM25 penalises length, and *"is imprisonment for life
-twenty-five years?"* - which s.57 answers in its own first sentence - was answered with
-**s.302, the death-penalty provision**, whose 51 characters happen to contain the same
-five words in different clauses. *Fixed* in the importer, with the detector's own rule:
-an ascending run of numbers each followed by a capitalised title, starting at the number
-after the last one the contents list, is a contents list that stopped. Three in a row is
-the minimum, because a statute cites earlier sections constantly and one or two
-ascending references are a coincidence. The corpus is 31 provisions now rather than 26;
-ss.58, 59, 61 and 62 are omitted or repealed in the source and are reported rather than
-loaded, exactly as a listed `[Repealed]` is.
-
-**Three well-formed lines ended the session.** The README said a malformed line does
-not, and the test of that name sends syntactically bad JSON - the one case that was
-handled. A lone surrogate (`"\ud800"`, valid JSON, and what a client truncating a UTF-16
-buffer emits) was echoed into `answer_question`'s result and could not be encoded as
-UTF-8, so the process exited 1 with the request unanswered and every later request
-unanswered too. A line of 20,000 nested `[` raised `RecursionError` out of `json.loads`,
-which the `except` clause did not list. And a second `initialize` carrying an unknown
-version was accepted and reset the protocol version, which decides whether a result
-carries `structuredContent` - a client's results changing shape mid-session because of a
-message that should have been refused. *Fixed* at three layers: the echo scrubs lone
-surrogates, the parse `except` catches `Exception`, the writer falls back to an error
-object on the right id, and a re-`initialize` at a different version is `-32600` while a
-retry at the same version is answered.
-
-**Two thirds of the suite disappeared on a normal install, and the run said "2 skipped".**
-`pytest.importorskip("jsonschema")` sat at module level, 950 lines into
-`tests/test_mcp_server.py`; a module-level importorskip raises during *collection*, so
-the whole file was dropped - and `tests/test_user_review.py` imports its helpers, so
-that went too. CI installs the dev group, so CI never saw it. *Fixed* by making the
-validator a fixture, so without it the only skips are the two parametrised tests that
-need a validator and the count says so, and
-`tests/test_suite_integrity.py` forbids a module-level skip in any test file.
-
-**`amended_by` was being read in two directions.** The library means the instrument that
-*ended* a version. The first `changes_between` read it as what *began* one, so it reported
-that section 20's 2016 commencement was made "by Ordinance II of 2022". The official SDK
-client run, printing each tool's output, is what surfaced it. *Fixed* with a separate
-`enacted_by` field, and a test that each side records the same instrument without either
-being read as the other.
-
-**Acts outside the parser's built-in table were invisible to it.** A corpus can hold any
-Act, but `section 5 PRPA` parsed as `section 5` with no Act, so `check_citations` would
-have reported every citation to an imported Act as "no Act named". *Fixed* by building the
-section pattern per corpus from the statute keys it actually holds.
-
-**An independent review scored the first MCP version 64/100, and it was right.** It was
-done by a reviewer who *used* the server rather than read it, and it reproduced the
-failure this repo exists to prevent, reached by routes the tests never walked:
-
-- `section 302-B` was read as section 302 and answered with **the murder section**, and
-  `Article 25 QSO` with the Constitution's equality clause.
-- `Rs. 500` parsed as "s. 500", so a draft mentioning a fine was reported as citing a
-  provision of no Act.
-- *"Whoever commits theft"* was answered with section 302, on `whoever` and `commits`.
-- Asking about three sections returned one, with no word about the other two.
-- The statute filter ran after the top-nine cut, so a CrPC question lost to PPC
-  provisions that were then filtered away, and it was refused.
-- The README's own flagship audit case came back `all_in_force`.
-- A 10,000-version corpus took 25 s for one call, because every lookup scanned the whole
-  corpus and overlap checking was quadratic.
-
-Each one is now a test in `tests/test_regressions.py`, and each was fixed at its cause:
-hyphenated numbers, word boundaries, instrument-aware articles, coverage-gated relevance,
-named non-answers, filter-then-cut, an `amended_since` status, a key index and a byte
-mask.
-
-**The library's own score for a cited provision is infinity, and JSON has no such
-number.** Python's `json.dumps` writes `Infinity` anyway, which is not valid JSON and is
-rejected by strict clients. The server sends `score: null` for a provision the question
-named directly (a lookup, not a ranking), and serialises with `allow_nan=False` so any
-future case fails loudly instead of producing broken JSON.
+Code: MIT. The statute text is the Pakistan Code as published by the Ministry of Law and Justice, Government of
+Pakistan (https://pakistancode.gov.pk/), under the Ministry's terms; the dataset built from it (the splitting into
+provisions, the in-force dates and repeal records) is CC BY 4.0 on Kaggle; please cite this repository if you use it.
+This is consolidated text, not a gazette, and the tool quotes statute text rather than giving legal advice: check
+anything you rely on against the gazette.

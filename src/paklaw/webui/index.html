@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pakistan Law</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23245c3e'/%3E%3Cpath d='M16 6v20M9 10h14M7 18l3-8 3 8a3 3 0 0 1-6 0zM19 18l3-8 3 8a3 3 0 0 1-6 0z' stroke='%23fff' stroke-width='1.8' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f5f6f3; --panel: #ffffff; --ink: #1c231f; --muted: #5d6a63; --line: #d8ded9;
+  --accent: #245c3e; --accent-ink: #ffffff; --soft: #e6efe9; --warn: #8a5300; --warn-bg: #fff3dc;
+  --bad: #a1271e; --bad-bg: #fbe8e5; --good: #1f6b3a; --good-bg: #e3f3e8; --quote: #f0f3ef;
+  --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111513; --panel: #19201c; --ink: #e3eae6; --muted: #98a69f; --line: #2d3832;
+    --accent: #6cc597; --accent-ink: #0c1a12; --soft: #1e2e25; --warn: #f0b860; --warn-bg: #2d2412;
+    --bad: #f08a80; --bad-bg: #321a18; --good: #84d6a0; --good-bg: #16291d; --quote: #151b18; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111513; --panel: #19201c; --ink: #e3eae6; --muted: #98a69f; --line: #2d3832;
+  --accent: #6cc597; --accent-ink: #0c1a12; --soft: #1e2e25; --warn: #f0b860; --warn-bg: #2d2412;
+  --bad: #f08a80; --bad-bg: #321a18; --good: #84d6a0; --good-bg: #16291d; --quote: #151b18; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+h1 { margin: 0; font-size: 26px; }
+.lede { margin: 4px 0 6px; color: var(--muted); max-width: 72ch; }
+.corpus { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+.corpus b { color: var(--ink); }
+button, .file { font: inherit; cursor: pointer; border-radius: 8px; }
+.theme { background: transparent; color: var(--muted); border: 1px solid var(--line); padding: 4px 12px; white-space: nowrap; }
+nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+nav button { background: var(--panel); color: var(--ink); border: 1px solid var(--line); padding: 7px 14px; }
+nav button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+section.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+section.panel[hidden] { display: none; }
+label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+textarea, input[type=text], input[type=date] { width: 100%; font: inherit; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+textarea { min-height: 84px; resize: vertical; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-top: 12px; }
+.row > div { flex: 1 1 180px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
+.go { background: var(--accent); color: var(--accent-ink); border: 0; padding: 9px 18px; font-weight: 600; }
+.go:disabled { opacity: .6; cursor: progress; }
+.chip { background: var(--soft); color: var(--accent); border: 1px solid var(--line); padding: 5px 10px; font-size: 13px; }
+.file { display: inline-block; background: var(--soft); color: var(--accent); border: 1px solid var(--line); padding: 7px 12px; }
+.file input { display: none; }
+.hint { color: var(--muted); font-size: 13px; }
+.out { margin-top: 16px; }
+.error { background: var(--bad-bg); color: var(--bad); border-radius: 8px; padding: 10px 12px; }
+.refusal { border-left: 4px solid var(--bad); background: var(--bad-bg); border-radius: 8px; padding: 12px 14px; }
+.refusal b { color: var(--bad); }
+.note { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 12px; margin-top: 10px; font-size: 14px; }
+.card { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 12px; }
+.card h3 { margin: 0; font-size: 17px; }
+.card .act { color: var(--muted); font-size: 13px; }
+.dates { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.pill { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+#c-sample { font-size: 15px; padding: 7px 12px; }
+.pill.good { background: var(--good-bg); color: var(--good); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.bad { background: var(--bad-bg); color: var(--bad); }
+.pill.plain { background: var(--soft); color: var(--ink); font-weight: 500; }
+.text { background: var(--quote); border-radius: 8px; padding: 10px 12px; font-size: 14px; white-space: pre-wrap; }
+.linkish { background: none; border: 0; color: var(--accent); padding: 0; font-size: 13px; text-decoration: underline; }
+.history { margin-top: 8px; font-size: 14px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.about { margin-top: 28px; color: var(--muted); font-size: 14px; }
+.about h2 { color: var(--ink); font-size: 17px; margin: 0 0 6px; }
+.about p { margin: 6px 0; max-width: 80ch; }
+a { color: var(--accent); }
+@media (max-width: 600px) {
+  h1 { font-size: 22px; }
+  section.panel { padding: 14px; }
+  table.cites thead { display: none; }
+  table.cites tr { display: block; border-bottom: 1px solid var(--line); padding: 6px 0; }
+  table.cites td { display: block; border: 0; padding: 2px 4px; }
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div>
+    <h1>Pakistan Law</h1>
+    <p class="lede">Ask a question about Pakistani federal statutes as of a date. The answer is the provisions that
+      were in force on that date, cited, with the dates each was in force, or a refusal that says why. Or paste a
+      draft and check every citation in it.</p>
+  </div>
+  <button class="theme" id="theme" type="button">dark theme</button>
+</header>
+<div class="corpus" id="corpus">Loading the corpus...</div>
+
+<nav role="tablist">
+  <button role="tab" data-panel="p-ask" aria-selected="true">Ask a question</button>
+  <button role="tab" data-panel="p-check" aria-selected="false">Check a draft's citations</button>
+</nav>
+
+<section class="panel" id="p-ask">
+  <label for="a-q">Your question</label>
+  <textarea id="a-q" placeholder="What is the punishment for theft?"></textarea>
+  <div class="row">
+    <div><label for="a-date">As of (the date the question is about)</label><input type="date" id="a-date"></div>
+    <div style="flex:2 1 260px"><label for="a-statute">Limit to one statute (optional)</label>
+      <input type="text" id="a-statute" list="statutes" placeholder="e.g. PPC, CrPC, PECA"></div>
+  </div>
+  <datalist id="statutes"></datalist>
+  <div class="actions">
+    <button class="go" id="a-go" type="button">Ask</button>
+    <span class="hint">Try:</span>
+    <span id="a-samples" style="display:contents"></span>
+  </div>
+  <div class="out" id="a-out" aria-live="polite"></div>
+</section>
+
+<section class="panel" id="p-check" hidden>
+  <label for="c-text">Draft text (a plaint, a notice, a judgment extract)</label>
+  <textarea id="c-text" style="min-height:140px" placeholder="The accused was charged under section 302 PPC..."></textarea>
+  <div class="row">
+    <div><label for="c-date">Check against the law as of</label><input type="date" id="c-date"></div>
+  </div>
+  <div class="actions">
+    <button class="go" id="c-go" type="button">Check citations</button>
+    <button class="chip" id="c-sample" type="button">Load a sample draft</button>
+    <label class="file">Upload a text file<input type="file" id="c-file" accept=".txt,.md,.text"></label>
+    <span class="hint" id="c-info"></span>
+  </div>
+  <div class="out" id="c-out" aria-live="polite"></div>
+</section>
+
+<div class="about">
+  <h2>About</h2>
+  <p>Answers come from BM25 retrieval over the consolidated federal statute text published by the Ministry of Law
+    and Justice on the Pakistan Code (pakistancode.gov.pk). Every provision carries the date it came into force and,
+    where it was repealed, substituted or omitted, the date it stopped. A question is answered only from provisions
+    in force on the date you give; a cited provision that was not in force then is refused, not quoted.</p>
+  <p>It refuses rather than guesses: when nothing matches strongly enough, when a citation names no Act or an Act
+    this corpus does not hold, or when the nearest provision is about a different offence. This is a research tool
+    that quotes statute text; it is not legal advice. Runs on this computer; nothing is sent anywhere.
+    Source: <a href="https://github.com/hammasbuilds/pak-law-assistant">github.com/hammasbuilds/pak-law-assistant</a>.</p>
+</div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var root = document.documentElement;
+  var info = null;
+
+  function isDark() {
+    return root.dataset.theme ? root.dataset.theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function themeLabel() { $("theme").textContent = isDark() ? "light theme" : "dark theme"; }
+  try { var saved = localStorage.getItem("paklaw-theme"); if (saved) root.dataset.theme = saved; } catch (e) {}
+  themeLabel();
+  $("theme").addEventListener("click", function () {
+    root.dataset.theme = isDark() ? "light" : "dark";
+    try { localStorage.setItem("paklaw-theme", root.dataset.theme); } catch (e) {}
+    themeLabel();
+  });
+
+  document.querySelectorAll("nav button").forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      document.querySelectorAll("nav button").forEach(function (t) {
+        t.setAttribute("aria-selected", t === tab ? "true" : "false");
+        $(t.dataset.panel).hidden = t !== tab;
+      });
+    });
+  });
+
+  function esc(s) {
+    return String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function fmtDate(iso) {
+    if (!iso) return "";
+    var d = new Date(iso + "T00:00:00");
+    return isNaN(d) ? iso : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+  function showError(out, message) { out.innerHTML = '<div class="error">' + esc(message) + "</div>"; }
+
+  function post(url, body, out, button, render) {
+    if (button) button.disabled = true;
+    out.innerHTML = '<span class="hint">Searching ' + (info ? info.provisions.toLocaleString() + " provisions" : "the corpus") + "...</span>";
+    return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, json: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { showError(out, res.json.error || "Request failed."); return; }
+        render(res.json);
+      })
+      .catch(function (err) { showError(out, "Could not reach the server: " + err.message); })
+      .then(function () { if (button) button.disabled = false; });
+  }
+
+  fetch("/api/info").then(function (r) { return r.json(); }).then(function (j) {
+    info = j;
+    $("a-date").value = j.today; $("c-date").value = j.today;
+    $("corpus").innerHTML = j.sample
+      ? '<span class="pill warn">demonstration sample</span> Only ' + j.provisions + " provisions are loaded. Set PAKLAW_CORPUS or put the dataset in data/ for the full statute book."
+      : "<b>" + j.provisions.toLocaleString() + " provisions</b> from <b>" + j.statutes + " federal statutes</b> (" + esc(j.source) + ")";
+    var list = $("statutes");
+    j.statute_list.forEach(function (s) {
+      var o = document.createElement("option");
+      o.value = s.key; o.label = s.title ? s.key + " - " + s.title : s.key;
+      o.textContent = o.label;
+      list.appendChild(o);
+    });
+    var holder = $("a-samples");
+    j.samples.forEach(function (s) {
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "chip";
+      b.textContent = s.question + " (" + s.as_of.slice(0, 4) + ")";
+      b.addEventListener("click", function () { $("a-q").value = s.question; $("a-date").value = s.as_of; $("a-statute").value = ""; ask(); });
+      holder.appendChild(b);
+    });
+  }).catch(function (e) { $("corpus").textContent = "Could not load corpus information: " + e.message; });
+
+  function datesFor(p) {
+    var from = '<span class="pill plain">in force from ' + esc(fmtDate(p.in_force_from)) + "</span>";
+    var to = p.in_force_to
+      ? '<span class="pill warn">until ' + esc(fmtDate(p.in_force_to)) + "</span>"
+      : '<span class="pill good">still in force</span>';
+    var note = p.status_note ? '<span class="pill warn">' + esc(p.status_note) + "</span>" : "";
+    return '<div class="dates">' + from + to + note + "</div>";
+  }
+
+  // A few notes are shown; many (a date before several Acts' records begin) are folded.
+  function notes(list) {
+    if (!list.length) return "";
+    if (list.length <= 3) return list.map(function (w) { return '<div class="note">' + esc(w) + "</div>"; }).join("");
+    return '<details class="note"><summary>' + list.length + " notes on what this corpus does not hold for this date</summary><ul>" +
+      list.map(function (w) { return "<li>" + esc(w) + "</li>"; }).join("") + "</ul></details>";
+  }
+
+  function ask() {
+    var out = $("a-out");
+    post("/api/ask", { question: $("a-q").value, as_of: $("a-date").value, statute: $("a-statute").value }, out, $("a-go"), function (j) {
+      var html = '<p class="hint">As of <b>' + esc(fmtDate(j.as_of)) + "</b>: " + esc(j.question) + "</p>";
+      var reason = j.refusal_reason || "";
+      if (j.refused) {
+        html += '<div class="refusal"><b>No answer.</b> ' + esc(reason.charAt(0).toUpperCase() + reason.slice(1)) + "</div>";
+      }
+      (j.superseded || []).forEach(function (s) {
+        // The refusal already names a cited provision that was not in force; say it once.
+        if (j.refused && reason.indexOf(s.status) !== -1) return;
+        html += '<div class="note"><b>' + esc(s.citation) + "</b>: " + esc(s.status) + "</div>";
+      });
+      (j.passages || []).forEach(function (p, i) {
+        html += '<div class="card"><h3>' + esc(p.citation) + (p.heading ? " - " + esc(p.heading) : "") + "</h3>" +
+          (p.act_title ? '<div class="act">' + esc(p.act_title) + "</div>" : "") +
+          datesFor(p) +
+          '<div class="text">' + esc(p.text) + "</div>" +
+          '<div class="actions" style="margin-top:8px"><button class="linkish" type="button" data-history="' + esc(p.citation) + '">Amendment history</button>' +
+          '<span class="hint">matched: ' + esc(p.matched) + "</span></div>" +
+          '<div class="history" id="h-' + i + '"></div></div>';
+      });
+      html += notes(j.warnings || []);
+      if (j.corpus_warning) html += '<div class="note">' + esc(j.corpus_warning) + "</div>";
+      out.innerHTML = html;
+      out.querySelectorAll("[data-history]").forEach(function (b, i) {
+        b.addEventListener("click", function () { history(b.dataset.history, $("h-" + i)); });
+      });
+    });
+  }
+  $("a-go").addEventListener("click", ask);
+  $("a-q").addEventListener("keydown", function (e) { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ask(); });
+
+  function history(citation, box) {
+    post("/api/history", { citation: citation }, box, null, function (j) {
+      if (j.refused) { box.innerHTML = '<div class="note">' + esc(j.refusal_reason || "No history.") + "</div>"; return; }
+      var html = '<div class="scroll"><table><thead><tr><th>Version</th><th>From</th><th>To</th><th>How it changed</th></tr></thead><tbody>';
+      j.history.forEach(function (h, k) {
+        html += "<tr><td>" + (k + 1) + "</td><td>" + esc(fmtDate(h.from)) + "</td><td>" + (h.to ? esc(fmtDate(h.to)) : "still in force") +
+          "</td><td>" + esc(h.manner) + (h.amended_by ? " by " + esc(h.amended_by) : "") + "</td></tr>";
+      });
+      html += "</tbody></table></div>";
+      box.innerHTML = html;
+    });
+  }
+
+  // Check a draft
+  $("c-sample").addEventListener("click", function () { if (info) $("c-text").value = info.sample_draft; });
+  $("c-file").addEventListener("change", function () {
+    var file = $("c-file").files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () { $("c-text").value = reader.result; $("c-info").textContent = file.name; };
+    reader.readAsText(file);
+    $("c-file").value = "";
+  });
+  $("c-go").addEventListener("click", function () {
+    var out = $("c-out");
+    post("/api/check", { text: $("c-text").value, as_of: $("c-date").value }, out, $("c-go"), function (j) {
+      var verdict = j.verdict === "problems" ? '<span class="pill bad">' + j.problems + " problem(s)</span>" : '<span class="pill good">' + esc(j.verdict) + "</span>";
+      var html = '<p>' + verdict + ' <span class="hint">' + j.total + " citation(s) checked against the law as of " + esc(fmtDate(j.as_of)) + "</span></p>";
+      if (!j.total) { html += '<p class="hint">No statutory citation found in the text.</p>'; }
+      else {
+        html += '<div class="scroll"><table class="cites"><thead><tr><th>As written</th><th>Read as</th><th>Status</th><th>Provision</th></tr></thead><tbody>';
+        j.citations.forEach(function (c) {
+          html += "<tr><td>" + esc(c.raw) + "</td><td><b>" + esc(c.citation) + '</b></td><td><span class="pill ' + esc(c.tone) + '">' + esc(c.label) + "</span></td><td>" +
+            esc(c.heading || c.note || "") + "</td></tr>";
+        });
+        html += "</tbody></table></div>";
+      }
+      if (j.corpus_warning) html += '<div class="note">' + esc(j.corpus_warning) + "</div>";
+      out.innerHTML = html;
+    });
+  });
+})();
+</script>
+</body>
+</html>

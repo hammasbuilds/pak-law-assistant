@@ -36,6 +36,7 @@ paklaw-mcp = "paklaw.mcp_server:main"
 # clients run for a PyPI package) starts it without --from.
 pak-law-assistant = "paklaw.mcp_server:main"
 paklaw-corpus = "paklaw.ingest:main"
+paklaw-web = "paklaw.web:main"
 
 [dependency-groups]
 # jsonschema is a DEV dependency only. The package itself has none, and the
