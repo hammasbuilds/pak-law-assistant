@@ -989,3 +989,33 @@ def test_corpus_info_lists_the_largest_statutes_first():
     ]
     info = LawServer(build(rows), "fixture").corpus_info({})
     assert [s["statute"] for s in info["statutes"]] == ["BIG", "SMALL"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What does section 20 of the Prevention of Electronic Crimes Act say?",
+        "What does section 20 of the Prevention of Electronic Crimes Act, 2016 say?",
+        "the punishment under the Prevention of Electronic Crimes Act",
+    ],
+)
+def test_a_held_act_with_a_lower_case_word_in_its_name_is_not_called_foreign(text):
+    # The title pattern only sees capitalised runs, so "Prevention of Electronic Crimes
+    # Act" was read as "Electronic Crimes Act", which no table holds, and the question
+    # was refused as naming another country's Act.
+    from paklaw.citation import names_unloaded_act
+
+    assert names_unloaded_act(text) is None
+
+
+@pytest.mark.parametrize(
+    "text, named",
+    [
+        ("What does the Electronic Crimes Act of India say?", "Electronic Crimes Act"),
+        ("section 302 of the Indian Penal Code", "Indian Penal Code"),
+    ],
+)
+def test_an_unheld_act_is_still_refused_next_to_the_held_name_exemption(text, named):
+    from paklaw.citation import names_unloaded_act
+
+    assert names_unloaded_act(text) == named

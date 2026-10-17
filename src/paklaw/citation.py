@@ -737,6 +737,13 @@ _FOREIGN_WORD = re.compile(
 )
 
 
+@functools.lru_cache(maxsize=16)
+def _known_names(keys: tuple[str, ...]) -> re.Pattern:
+    """Every statute name in `keys` as one case-insensitive, whole-word pattern."""
+    alternatives = "|".join(re.escape(k) for k in sorted(keys, key=len, reverse=True) if k)
+    return re.compile(r"(?<![\w])(?:" + alternatives + r")(?![\w])", re.I)
+
+
 def names_unloaded_act(
     text: str,
     *,
@@ -777,11 +784,21 @@ def names_unloaded_act(
     """
     table = {**STATUTES, **(extra or {})}
     phrases = corpus_phrases if corpus_phrases is not None else ()
+    # `_REFUSABLE_TITLE` only sees runs of capitalised words, so a held Act whose name
+    # has a lower-case word in it - "Prevention of Electronic Crimes Act", "Protection
+    # against Harassment of Women at the Workplace Act" - was read as its capitalised
+    # tail ("Electronic Crimes Act"), which is in no table, and the question was refused
+    # as naming an Act this corpus does not hold. A title inside the span of a name the
+    # table knows is that name, not another Act.
+    known = [m.span() for m in _known_names(tuple(sorted(table))).finditer(text)]
 
     for match in re.finditer(_REFUSABLE_TITLE, text):
         title = re.sub(r"\s+", " ", match.group(0).strip()).lower()
         title = re.sub(r"^the\s+", "", title)
         if title in table:
+            continue
+        start, end = match.span()
+        if any(s <= start and end <= e for s, e in known):
             continue
         return match.group(0).strip()
 
