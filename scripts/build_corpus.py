@@ -54,6 +54,20 @@ WORKERS = 6
 RUNAWAY = 60_000
 
 
+def _text(body: bytes) -> str:
+    """Decode a page, trying the encoding it probably is before giving up on a byte.
+
+    The index is mostly UTF-8 and carries the odd Windows-1252 byte - a curly apostrophe
+    in "Public Accountants' Default Act" is 0x92 there and not valid UTF-8 - so decoding
+    with errors="replace" put a replacement character in the Act's own name, and from
+    there into the provenance line of every provision of it.
+    """
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        return body.decode("cp1252", "replace")
+
+
 def slug(title: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", title).strip("-").lower()[:110] or "untitled"
 
@@ -84,10 +98,7 @@ def catalogue(work: Path) -> int:
             body = get(INDEX.format(letter=letter, page=page))
             if body is None:
                 break
-            rows = [
-                (url, html.unescape(title).strip())
-                for url, title in ROW.findall(body.decode("utf-8", "replace"))
-            ]
+            rows = [(url, html.unescape(title).strip()) for url, title in ROW.findall(_text(body))]
             # Asked for a page past the end, the index serves the last page again, so
             # the walk stops on a repeat rather than on a guessed page count.
             if not rows or rows[0][1] == first_seen:
@@ -171,15 +182,25 @@ def pdf_text(pdf: Path) -> str:
     handle, name = tempfile.mkstemp(suffix=".txt")
     os.close(handle)
     try:
+        # `-enc UTF-8`, because pdftotext writes Latin-1 by default and the Code's text
+        # is full of soft hyphens: the byte 0xAD is U+00AD there and not valid UTF-8 at
+        # all, so decoding with errors="replace" turned "Pro<shy>Chancellor" into
+        # "Pro�Chancellor". 1,023 provisions - 3.4% of the corpus - carried a
+        # replacement character where a real one belonged, and `corpus.normalise_source`
+        # already strips U+00AD, so the character it was meant to handle never reached
+        # it. Decoded strictly now: a byte this cannot read is a fault to see, not one
+        # to paper over.
         done = subprocess.run(
-            ["pdftotext", "-layout", str(pdf), name],
+            ["pdftotext", "-layout", "-enc", "UTF-8", str(pdf), name],
             capture_output=True,
             text=True,
             timeout=300,
         )
         if done.returncode != 0:
             return ""
-        return Path(name).read_text(encoding="utf-8", errors="replace")
+        return Path(name).read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return ""
     except (subprocess.TimeoutExpired, OSError):
         return ""
     finally:

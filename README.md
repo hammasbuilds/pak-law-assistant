@@ -46,7 +46,7 @@ No dependencies, so nothing to resolve:
 pip install -e .          # or: uvx pak-law-assistant  (once released)
 paklaw-mcp --check        # the MCP server answers, on a 3-provision sample
 
-# the federal statute book, 30,131 provisions, committed to this repo
+# the federal statute book, 30,174 provisions, committed to this repo
 PAKLAW_CORPUS=data/pakistan-code.jsonl.gz paklaw-mcp --check
 ```
 
@@ -443,19 +443,36 @@ read first. An unknown field such as a typo'd `sectoin` names the row it is in.
 Without `PAKLAW_CORPUS`, the server runs on a **three-provision sample** with
 illustrative, unofficial wording, and every result carries a `corpus_warning` saying so.
 
-### The federal statute book, as shipped
+### The dataset: the federal statute book
 
-`data/pakistan-code.jsonl.gz` — **30,131 provisions from 970 Acts**, 7.7 MB compressed,
-built from [pakistancode.gov.pk](https://pakistancode.gov.pk/) by
-`scripts/build_corpus.py`. The Ministry publishes 1,034 Acts; 3 of their PDFs 404, 48 are
-scanned images with no text layer, 10 produce no provisions at all, and the rest are in.
+We built this dataset. `data/pakistan-code.jsonl.gz` — **30,174 provisions from 970
+Acts**, 7.7 MB compressed, every provision carrying the dates it was in force and a line
+saying which Act it came from.
+
+**Source.** The [Pakistan Code](https://pakistancode.gov.pk/), published by the Ministry
+of Law and Justice, Government of Pakistan. `scripts/build_corpus.py` walks its
+alphabetical index, fetches each Act and turns the published text into dated provisions.
+The Ministry lists 1,034 Acts; 3 of their files are missing at source, 48 are scanned
+images with no text layer, 10 yield no provisions, and the rest are here.
 
 | | |
 |---|---|
 | Commencement read from the Act's own header | 891 of 970 Acts (91.9%) |
-| Acts the index records as repealed | 38, their provisions dated and flagged |
+| Acts the index records as repealed | 39, their provisions dated and flagged |
 | Repeals whose exact day the source does not give | recorded with `end_known: false` |
 | Provisions named in an Act's contents but not imported | 0.9% |
+
+**What it is for.** It is the corpus behind this MCP server, and it is built to answer a
+question *as of a date* — so it suits work on temporal retrieval, on citation checking,
+and on refusal behaviour, where the question is not only whether an answer is found but
+whether the system declines when the corpus cannot support one. As a product it gives a
+legal assistant, a drafting checker or a compliance tool a statute book that knows what
+was in force on the day being asked about.
+
+**Using it.** The statute text is the Ministry's and carries the Ministry's own terms.
+The dataset — the splitting into provisions, the in-force dates, the repeal records and
+the structure — is ours, and if you use it in research or in a product, please cite this
+repository. Check anything you rely on against the gazette.
 
 Rebuild it in three resumable stages — the middle one takes about 40 minutes over a
 government site that is the only copy of this text, so both fetch stages skip what is
@@ -595,7 +612,7 @@ Run them with
   contents list names are not in it. **Check anything you rely on against the gazette.**
 - **A bigger corpus weakens the "that word is nowhere in the statute book" refusal.**
   Over thirteen provisions, a word the corpus has never seen is a strong signal that the
-  question is not a legal one. Over 30,131 provisions almost every English word appears
+  question is not a legal one. Over 30,174 provisions almost every English word appears
   somewhere. Measured on eight plainly non-legal questions ("how do I bake a chocolate
   cake?", "how much should I pay for a used car in Lahore?"), the sample refuses all
   eight and the full corpus refuses four — each of the four answered at a coverage of
