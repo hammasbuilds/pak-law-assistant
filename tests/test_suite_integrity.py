@@ -102,8 +102,8 @@ def test_the_suite_is_all_of_it():
 
     stated = re.search(r"(\d+) tests? collected", done.stdout)
     assert stated, done.stdout[-2000:]
-    assert int(stated.group(1)) == 742, (
-        f"{stated.group(1)} tests collected, not 742. If that is deliberate, change the "
+    assert int(stated.group(1)) == 746, (
+        f"{stated.group(1)} tests collected, not 746. If that is deliberate, change the "
         "figure here. It is the only place the count is pinned: the README deliberately "
         "quotes none, having said 49, then 226, then 280 - this message used to send a "
         "reader there to update a number that is not written down any more."

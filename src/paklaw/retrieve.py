@@ -555,6 +555,8 @@ def expand(term: str) -> set[str]:
 #: answers literally - while "ta zir", spelled with a space, worked. Folded on both
 #: sides, the way `normalise_number` already folds "489-F" to "489F".
 _FOLD = re.compile(r"[’'‐-―-]")
+#: -ise/-ised/-ises/-ising/-isation(s) and -yse/-ysed/-ysing, folded to the z spelling.
+_SPELLING = re.compile(r"([iy])s(e|ed|es|ing|ation|ations)$")
 
 
 @lru_cache(maxsize=1 << 18)
@@ -565,8 +567,15 @@ def _fold(token: str) -> str:
     of every provision - and spent 13 seconds in `re.sub` alone. A string is immutable,
     so the cached value cannot be altered by a caller.
     """
-    folded = _FOLD.sub("", token)
-    return folded or token
+    folded = _FOLD.sub("", token) or token
+    # British and American spellings of one word. PECA s.3 is headed "Unauthorized
+    # access" and a reader in Pakistan types "unauthorised", so the provision that
+    # answers the question shared no word with it and s.24 came back instead. Folded on
+    # both sides like the apostrophe, so neither spelling is preferred; short words
+    # ("rise", "noise") are left alone.
+    if len(folded) >= 7:
+        folded = _SPELLING.sub(r"\1z\2", folded)
+    return folded
 
 
 def _without_stopwords(tokens: list[str], defined: Container[str] | None) -> list[str]:

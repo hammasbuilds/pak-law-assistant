@@ -1019,3 +1019,21 @@ def test_an_unheld_act_is_still_refused_next_to_the_held_name_exemption(text, na
     from paklaw.citation import names_unloaded_act
 
     assert names_unloaded_act(text) == named
+
+
+@pytest.mark.parametrize(
+    "british, american",
+    [("unauthorised", "unauthorized"), ("organisation", "organization"), ("analysed", "analyzed")],
+)
+def test_british_and_american_spellings_are_one_token(british, american):
+    # PECA s.3 is headed "Unauthorized access"; "unauthorised access" shared no word
+    # with it and s.24 was returned instead.
+    from paklaw.retrieve import tokenise
+
+    assert tokenise(british) == tokenise(american)
+
+
+def test_short_words_are_not_respelled():
+    from paklaw.retrieve import tokenise
+
+    assert tokenise("rise noise") == ["rise", "noise"]
