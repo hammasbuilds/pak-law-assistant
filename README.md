@@ -46,8 +46,9 @@ No dependencies, so nothing to resolve:
 pip install -e .          # or: uvx pak-law-assistant  (once released)
 paklaw-mcp --check        # the MCP server answers, on a 3-provision sample
 
-# the federal statute book, 30,174 provisions, committed to this repo
-PAKLAW_CORPUS=data/pakistan-code.jsonl.gz paklaw-mcp --check
+# the federal statute book, 30,174 provisions - from Kaggle, or built with
+# scripts/build_corpus.py, then pointed at from anywhere
+PAKLAW_CORPUS=/path/to/pakistan-code.jsonl.gz paklaw-mcp --check
 ```
 
 Add it to an MCP client — Claude Code, or anything that speaks the protocol:
@@ -445,9 +446,13 @@ illustrative, unofficial wording, and every result carries a `corpus_warning` sa
 
 ### The dataset: the federal statute book
 
-We built this dataset. `data/pakistan-code.jsonl.gz` — **30,174 provisions from 970
-Acts**, 7.7 MB compressed, every provision carrying the dates it was in force and a line
-saying which Act it came from.
+We built this dataset. **30,174 provisions from 970 Acts**, 7.7 MB compressed, every
+provision carrying the dates it was in force and a line saying which Act it came from.
+
+It is **published on Kaggle** rather than committed here — this package installs with no
+dependencies and a 7.7 MB data file is not part of that. `scripts/build_corpus.py`
+rebuilds it from the source below, and `PAKLAW_CORPUS` points the server at wherever you
+put it.
 
 **Source.** The [Pakistan Code](https://pakistancode.gov.pk/), published by the Ministry
 of Law and Justice, Government of Pakistan. `scripts/build_corpus.py` walks its

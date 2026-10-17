@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -24,12 +25,33 @@ CORPUS = Path(__file__).resolve().parents[1] / "data" / "pakistan-code.jsonl.gz"
 
 
 @pytest.fixture(scope="module")
-def shipped():
-    assert CORPUS.is_file(), (
-        f"{CORPUS} is not here. It is committed; rebuild it with "
-        "`python scripts/build_corpus.py catalogue | fetch | build`."
-    )
-    corpus, _ = load_corpus(str(CORPUS))
+def corpus_path(shipped_path):
+    return shipped_path
+
+
+@pytest.fixture(scope="module")
+def shipped_path():
+    """Where the built corpus is, or a skip saying how to make one."""
+    path = Path(os.environ.get("PAKLAW_CORPUS") or CORPUS)
+    if not path.is_file():
+        pytest.skip(
+            f"no corpus at {path}: build one with `python scripts/build_corpus.py "
+            "catalogue | fetch | build`, or set PAKLAW_CORPUS to one"
+        )
+    return path
+
+
+@pytest.fixture(scope="module")
+def shipped(shipped_path):
+    """The built corpus, when it is on this machine.
+
+    It is not in the repository: it is published as a dataset, and a 7.7 MB file is not
+    what a zero-dependency package should carry. So these skip by name rather than fail,
+    the way every other test here that needs data the repo does not hold behaves - and
+    they skip with the command that produces it, so a reader who wants them run knows
+    what to run. `PAKLAW_CORPUS` points at it anywhere else.
+    """
+    corpus, _ = load_corpus(str(shipped_path))
     return corpus
 
 
@@ -93,12 +115,12 @@ def test_the_file_describes_itself(shipped):
     assert sources and sources[0]["url"] == "https://pakistancode.gov.pk/"
 
 
-def test_the_metadata_row_is_the_first_line_and_only_the_first(shipped):
+def test_the_metadata_row_is_the_first_line_and_only_the_first(shipped, corpus_path):
     """`read_corpus` takes `_corpus` from row one; anywhere else it is a provision with
     unknown fields, and the corpus would refuse to load."""
     import gzip
 
-    with gzip.open(CORPUS, "rt", encoding="utf-8") as handle:
+    with gzip.open(corpus_path, "rt", encoding="utf-8") as handle:
         first = json.loads(handle.readline())
         assert set(first) == {"_corpus"}
         for line, _ in zip(handle, range(500), strict=False):

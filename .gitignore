@@ -17,6 +17,10 @@ build/
 # Data & models - never commit these
 data/raw/*
 data/processed/*
+# The built corpus lives on Kaggle, not here. `scripts/build_corpus.py` rebuilds it and
+# `PAKLAW_CORPUS` points the server at wherever you put it.
+data/*.jsonl
+data/*.jsonl.gz
 !data/**/.gitkeep
 
 models/
