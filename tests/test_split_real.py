@@ -548,3 +548,48 @@ def test_the_text_is_not_optional():
 
     text = inspect.signature(_tail_run).parameters["text"]
     assert text.default is inspect.Parameter.empty
+
+
+def test_a_wholly_substituted_provision_is_still_a_heading():
+    """The Pakistan Code wraps a provision that was substituted entire in the marker
+    pointing at the footnote: section 6 of the Anti-Terrorism Act opens
+
+        1[6. Terrorism.___ (1) In this Act, "terrorism" means ...
+
+    The line then does not begin with a number, was no heading candidate at all, and
+    sections 6 and 7 - which define terrorism and set its punishment - were absent from
+    a corpus that held the rest of their Act. A question about either was answered from
+    the sections on appeals.
+    """
+    text = (
+        "CONTENTS\n"
+        "5. Use of armed forces\n"
+        "6. Terrorism\n"
+        "7. Punishment for acts of terrorism\n"
+        "8. Prohibition of acts\n"
+        "\n"
+        "5. Use of armed forces.___ Any police officer may use the necessary force.\n"
+        '1[6. Terrorism.___ In this Act, "terrorism" means the use or threat of action.]\n'
+        "2[7. Punishment for acts of terrorism.___ Whoever commits an act of terrorism "
+        "shall be punished with imprisonment.]\n"
+        "8. Prohibition of acts.___ A person who stirs up sectarian hatred commits an "
+        "offence under this section.\n"
+    )
+    rows, _ = split_act(text, statute="ATA", in_force_from="1997-08-16")
+    numbers = {row["number"] for row in rows}
+    assert {"5", "6", "7", "8"} <= numbers, sorted(numbers)
+
+    sixth = next(row for row in rows if row["number"] == "6")
+    assert sixth["heading"] == "Terrorism"
+    assert "use or threat of action" in sixth["text"]
+
+
+def test_a_number_glued_to_a_bracket_is_still_that_number():
+    """The marker is matched only in front of a bracket, so "16." stays section 16."""
+    text = (
+        "CONTENTS\n15. One\n16. Two\n\n"
+        "15. One.___ The first provision of this Act.\n"
+        "16. Two.___ The second provision of this Act.\n"
+    )
+    rows, _ = split_act(text, statute="X", in_force_from="2000-01-01")
+    assert {row["number"] for row in rows} == {"15", "16"}

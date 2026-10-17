@@ -17,6 +17,7 @@ effect from before its current version began).
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 import json
 import os
 import re
@@ -152,8 +153,18 @@ def read_corpus(path: str | Path) -> tuple[list[dict], dict]:
 
 
 def read_rows(path: str | Path, *, keep_meta: bool = False) -> list[dict]:
-    """A JSON array of provisions, or JSON Lines with one provision per line."""
-    text = Path(path).read_text(encoding="utf-8-sig")
+    """A JSON array of provisions, or JSON Lines with one provision per line.
+
+    A `.gz` file is read as gzip. The federal statute book is 40 MB of JSON and 8 MB
+    compressed, and a corpus that has to be unpacked by hand before the server will read
+    it is one more step between a checkout and an answer.
+    """
+    path = Path(path)
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8-sig") as handle:
+            text = handle.read()
+    else:
+        text = path.read_text(encoding="utf-8-sig")
     if text.lstrip().startswith("["):
         rows = json.loads(text)
     else:

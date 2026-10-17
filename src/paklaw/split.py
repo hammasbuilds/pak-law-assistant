@@ -49,8 +49,17 @@ from .corpus import normalise_source
 
 # A line that could open a provision: "20.", "302.", "2A.", "489-F.", optionally inside
 # a marker bracket "[20." left by a source, followed by a space or the end of the line.
+#
+# `marker` is the amendment marker the Pakistan Code prints when a WHOLE provision was
+# substituted: section 6 of the Anti-Terrorism Act opens `1[6. Terrorism.___`, the `1`
+# pointing at the footnote that records the substitution. Without it the line does not
+# begin with a number and is not a heading candidate at all - so the two sections that
+# define terrorism and set its punishment were absent from the corpus while the rest of
+# their Act was in it, and a question about either was answered from the appeal sections.
+# It is matched only in front of a bracket, so "16." is still section 16.
 _CANDIDATE = re.compile(
-    r"^[ \t]*(?P<glued>(?:\d{1,3}(?:,[ \t]*|[ \t]+(?=\d)))+)?(?P<open>[\[({])?"
+    r"^[ \t]*(?P<glued>(?:\d{1,3}(?:,[ \t]*|[ \t]+(?=\d)))+)?"
+    r"(?P<marker>(?:\d{1,3}|\*)(?=\[))?(?P<open>[\[({])?"
     r"(?P<number>\d{1,5}(?:[- ]?[A-Z]{1,3})?)(?P<sep>[.,)])(?=[ \t]|$|_|[A-Z][a-z])[ \t]*"
     r"(?P<rest>.*)$",
     re.M,
@@ -207,6 +216,7 @@ def _contents(text: str) -> tuple[dict[str, str], list[str], int, int]:
         return {}, [], 0, 0
     headings: dict[str, str] = {}
     order: list[str] = []
+    starts: list[int] = []
     end = found.end()
     first_heading = "\x00"
     for match in _CANDIDATE.finditer(text, found.end()):
@@ -223,10 +233,30 @@ def _contents(text: str) -> tuple[dict[str, str], list[str], int, int]:
         if number not in headings:
             headings[number] = match.group("rest").strip()
             order.append(number)
+        starts.append(match.start())
         end = match.end()
     if len(order) < 3:
         return {}, [], 0, 0
+    if _spread_out(starts):
+        # "CONTENTS" printed with no list under it - the Act's body begins directly
+        # beneath it. The loop then collects the BODY's headings as contents entries and,
+        # finding no restart, runs `end` to the last provision: the whole Act is reported
+        # as its own table of contents and nothing at all is imported. 29 Acts, among
+        # them the Dissolution of Muslim Marriages Act 1939, were lost this way.
+        return {}, [], 0, 0
     return headings, order, found.start(), end
+
+
+#: A contents entry is one line; a provision is a line and then its text. Measured over
+#: the Code: a real contents list runs 37 to 63 characters between entries, and the body
+#: of the shortest Act that has no list runs 562.
+TOC_GAP = 200
+
+
+def _spread_out(starts: list[int]) -> bool:
+    """Whether these matches are too far apart to be a list of headings."""
+    gaps = sorted(b - a for a, b in zip(starts, starts[1:], strict=False))
+    return bool(gaps) and gaps[len(gaps) // 2] > TOC_GAP
 
 
 def _heaviest_rising_chain(candidates: list[_Candidate]) -> list[int]:

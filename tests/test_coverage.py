@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from paklaw import audit
+from paklaw.answer import LawAssistant
 from paklaw.corpus import CorpusError, Provision, build
 from paklaw.ingest import main as corpus_main
 from paklaw.ingest import read_corpus, read_rows, write_jsonl
@@ -41,6 +42,73 @@ def row(**over) -> dict:
 def test_start_known_must_be_a_bool():
     with pytest.raises(CorpusError, match="start_known"):
         Provision(**row(start_known="no"))
+
+
+# ---- where the record ENDS ----------------------------------------------------------
+#
+# The Pakistan Code annotates 86 of its 1,034 Acts as repealed in the title itself, and for
+# all but ten it names the repealing instrument without a day. Served as live provisions
+# those are the exact failure this package exists to prevent, so an imprecise end date is
+# recorded as one rather than discarded.
+
+
+def ended(**over) -> dict:
+    return (
+        row(
+            start_known=True,
+            in_force_from="2010-05-25",
+            in_force_to="2023-01-01",
+            manner="repealed",
+            amended_by="Act XXVI of 2023",
+            end_known=False,
+        )
+        | over
+    )
+
+
+def test_end_known_must_be_a_bool():
+    with pytest.raises(CorpusError, match="end_known"):
+        Provision(**ended(end_known="no"))
+
+
+def test_an_unknown_end_still_needs_a_date():
+    """Without one the row reads as in force, which is the error being prevented."""
+    with pytest.raises(CorpusError, match="end_known is false but no in_force_to"):
+        Provision(**ended(in_force_to=None))
+
+
+def test_a_repeal_whose_day_is_unknown_is_not_in_force_today():
+    p = Provision(**ended())
+    assert p.in_force_on(dt.date(2022, 6, 1)) is True
+    assert p.in_force_on(dt.date(2026, 1, 1)) is False
+    assert p.currently_in_force is False
+
+
+def test_the_note_says_the_day_is_not_held_and_names_the_instrument():
+    note = Provision(**ended()).status_note(dt.date(2026, 1, 1))
+    assert "Act XXVI of 2023" in note
+    assert "earliest it can have been" in note
+    assert "unknown here" in note
+    # Not the wording used when the date IS the repeal date.
+    assert "with effect from" not in note
+
+
+def test_an_exact_repeal_says_with_effect_from_and_claims_no_doubt():
+    note = Provision(**ended(end_known=True, in_force_to="2011-05-31")).status_note(
+        dt.date(2026, 1, 1)
+    )
+    assert note == "repealed by Act XXVI of 2023 with effect from 2011-05-31"
+    assert "unknown" not in note
+
+
+def test_end_known_survives_a_round_trip_through_a_corpus_file(tmp_path):
+    """A writer that drops the flag turns every imprecise repeal back into live law."""
+    path = tmp_path / "corpus.jsonl"
+    write_jsonl([ended()], path)
+    rows, _ = read_corpus(path)
+    back = Provision(**rows[0])
+    assert back.end_known is False
+    assert back.in_force_on(dt.date(2026, 1, 1)) is False
 
 
 def test_before_the_record_is_unknown_not_not_yet_in_force():
@@ -434,3 +502,65 @@ def test_the_caveat_is_attached_at_one_place_not_per_return():
 
     returns = sum(1 for sub in ast.walk(bodies["_answer"]) if isinstance(sub, ast.Return))
     assert returns >= 8, f"_answer has {returns} returns; the wrapper covers all of them"
+
+
+def test_a_gzipped_corpus_reads_the_same_as_a_plain_one(tmp_path):
+    """The federal statute book is 40 MB of JSON and 8 MB compressed. A corpus that has
+    to be unpacked by hand first is a step between a checkout and an answer."""
+    import gzip as _gzip
+
+    plain = tmp_path / "corpus.jsonl"
+    write_jsonl([row(start_known=True)], plain, meta={"as_at": "2025-06-30"})
+    packed = tmp_path / "corpus.jsonl.gz"
+    packed.write_bytes(_gzip.compress(plain.read_bytes()))
+
+    assert read_corpus(packed) == read_corpus(plain)
+
+
+def test_the_server_loads_a_gzipped_corpus(tmp_path):
+    packed = tmp_path / "corpus.jsonl.gz"
+    plain = tmp_path / "plain.jsonl"
+    write_jsonl([row(start_known=True)], plain)
+    packed.write_bytes(__import__("gzip").compress(plain.read_bytes()))
+
+    corpus, source = load_corpus(str(packed))
+    assert len(corpus) == 1
+    assert source == str(packed)
+
+
+# ---- how much of the question a provision must carry --------------------------------
+
+
+def test_the_coverage_setting_defaults_to_the_assistants_own(monkeypatch, tmp_path):
+    monkeypatch.delenv("PAKLAW_MIN_COVERAGE", raising=False)
+    path = tmp_path / "corpus.jsonl"
+    write_jsonl([row(start_known=True)], path)
+    server = LawServer(*load_corpus(str(path)))
+    assert server.assistant.min_coverage == LawAssistant.min_coverage
+
+
+def test_the_coverage_setting_is_read_from_the_environment(monkeypatch, tmp_path):
+    """The default was chosen over a thirteen-provision fixture. Over the 970-Act statute
+    book a word absent from the whole corpus is a much weaker signal, and until this was
+    exposed the threshold could only be changed by editing the source."""
+    monkeypatch.setenv("PAKLAW_MIN_COVERAGE", "0.75")
+    path = tmp_path / "corpus.jsonl"
+    write_jsonl([row(start_known=True)], path)
+    server = LawServer(*load_corpus(str(path)))
+    assert server.assistant.min_coverage == 0.75
+
+
+@pytest.mark.parametrize("value", ["0.8%", "", "  ", "high", "-0.1", "1.5", "nan"])
+def test_a_coverage_setting_that_is_not_a_share_is_refused(monkeypatch, tmp_path, value):
+    """Ignored, it would leave an operator believing the server is stricter than it is -
+    the direction that produces confident wrong answers. An empty value is the one
+    exception: it means unset."""
+    monkeypatch.setenv("PAKLAW_MIN_COVERAGE", value)
+    path = tmp_path / "corpus.jsonl"
+    write_jsonl([row(start_known=True)], path)
+    if not value.strip():
+        server = LawServer(*load_corpus(str(path)))
+        assert server.assistant.min_coverage == LawAssistant.min_coverage
+        return
+    with pytest.raises(CorpusError, match="PAKLAW_MIN_COVERAGE"):
+        LawServer(*load_corpus(str(path)))

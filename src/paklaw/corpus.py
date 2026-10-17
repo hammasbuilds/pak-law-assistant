@@ -107,6 +107,16 @@ class Provision:
     # not when this text came into force: the text was in force on that date and may
     # have been for years, but nothing earlier is held.
     start_known: bool = True
+    # False when `in_force_to` is only as precise as the source was - the Code lists an
+    # Act as repealed and names the repealing instrument but not the day, so the year is
+    # all that is held. The date is then the EARLIEST this version can have ended, and
+    # the provision is reported as out of force from it.
+    #
+    # Erring that way round is the whole point. A provision wrongly reported as repealed
+    # prompts someone to check; one wrongly reported as in force is a fluent, correctly
+    # cited answer about law that no longer exists, which is the failure this module was
+    # built to prevent. `status_note` says which of the two a reader is looking at.
+    end_known: bool = True
     # What a reader must know about this version that its dates do not say: a court
     # order striking part of it down, or that its text is not held at all.
     note: str = ""
@@ -136,6 +146,8 @@ class Provision:
                 setattr(self, name, "")
         if not isinstance(self.start_known, bool):
             raise CorpusError(f"start_known must be true or false, got {self.start_known!r}")
+        if not isinstance(self.end_known, bool):
+            raise CorpusError(f"end_known must be true or false, got {self.end_known!r}")
         self.unit = self.unit.strip().lower()
         if self.unit not in UNITS:
             raise CorpusError(f"unit must be one of {sorted(UNITS)}, got {self.unit!r}")
@@ -154,6 +166,11 @@ class Provision:
             raise CorpusError(f"{self.key}: bad date: {exc}") from exc
         if self.in_force_from is None:
             raise CorpusError(f"{self.key}: in_force_from is required")
+        if not self.end_known and self.in_force_to is None:
+            raise CorpusError(
+                f"{self.key}: end_known is false but no in_force_to is given; an imprecise "
+                "end date is still a date, and without one this reads as still in force"
+            )
         if self.in_force_to and self.in_force_to <= self.in_force_from:
             raise CorpusError(
                 f"{self.key}: in force {self.in_force_from} to {self.in_force_to} is never in "
@@ -198,7 +215,15 @@ class Provision:
                 f"(commenced {self.in_force_from.isoformat()})"
             )
         manner = self.manner or "repealed"
-        note = f"{manner} with effect from {self.in_force_to.isoformat()}"
+        by = f" by {self.amended_by}" if self.amended_by else ""
+        if self.end_known:
+            note = f"{manner}{by} with effect from {self.in_force_to.isoformat()}"
+        else:
+            note = (
+                f"{manner}{by}, on a date this corpus does not hold: "
+                f"{self.in_force_to.isoformat()} is the earliest it can have been, so "
+                f"whether this was still in force on {as_of.isoformat()} is unknown here"
+            )
         if self.superseded_by:
             note += f"; see {self.superseded_by}"
         return note

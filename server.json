@@ -25,6 +25,19 @@
           "isRequired": false,
           "isSecret": false,
           "format": "filepath"
+        },
+        {
+          "name": "PAKLAW_MIN_COVERAGE",
+          "description": "Share of a question's content words a provision must carry before it is offered, 0 to 1. Defaults to 0.5; a large corpus wants a higher value.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "PAKLAW_TELEMETRY",
+          "description": "Path to a JSON Lines file to append one record per tool call to: the tool, how long it took and whether it refused. Never the question. Off unless set.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
         }
       ]
     }

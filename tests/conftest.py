@@ -26,7 +26,7 @@ import pytest
 
 #: Environment this package reads. `src/paklaw/mcp_server.py` reads exactly one variable
 #: and `tests/test_coverage.py` asserts that, so this list is one name by construction.
-OWN_ENVIRONMENT = ("PAKLAW_CORPUS",)
+OWN_ENVIRONMENT = ("PAKLAW_CORPUS", "PAKLAW_MIN_COVERAGE", "PAKLAW_TELEMETRY")
 
 
 @pytest.fixture(autouse=True, scope="session")

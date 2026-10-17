@@ -45,6 +45,9 @@ No dependencies, so nothing to resolve:
 ```bash
 pip install -e .          # or: uvx pak-law-assistant  (once released)
 paklaw-mcp --check        # the MCP server answers, on a 3-provision sample
+
+# the federal statute book, 30,131 provisions, committed to this repo
+PAKLAW_CORPUS=data/pakistan-code.jsonl.gz paklaw-mcp --check
 ```
 
 Add it to an MCP client — Claude Code, or anything that speaks the protocol:
@@ -440,6 +443,41 @@ read first. An unknown field such as a typo'd `sectoin` names the row it is in.
 Without `PAKLAW_CORPUS`, the server runs on a **three-provision sample** with
 illustrative, unofficial wording, and every result carries a `corpus_warning` saying so.
 
+### The federal statute book, as shipped
+
+`data/pakistan-code.jsonl.gz` — **30,131 provisions from 970 Acts**, 7.7 MB compressed,
+built from [pakistancode.gov.pk](https://pakistancode.gov.pk/) by
+`scripts/build_corpus.py`. The Ministry publishes 1,034 Acts; 3 of their PDFs 404, 48 are
+scanned images with no text layer, 10 produce no provisions at all, and the rest are in.
+
+| | |
+|---|---|
+| Commencement read from the Act's own header | 891 of 970 Acts (91.9%) |
+| Acts the index records as repealed | 38, their provisions dated and flagged |
+| Repeals whose exact day the source does not give | recorded with `end_known: false` |
+| Provisions named in an Act's contents but not imported | 0.9% |
+
+Rebuild it in three resumable stages — the middle one takes about 40 minutes over a
+government site that is the only copy of this text, so both fetch stages skip what is
+already on disk:
+
+```bash
+python scripts/build_corpus.py catalogue   # the index   -> catalogue.json
+python scripts/build_corpus.py fetch       # 1,034 Acts  -> pdf/     (433 MB, outside the repo)
+python scripts/build_corpus.py build       # pdf/        -> corpus.jsonl
+```
+
+`scripts/build_corpus.py build` writes a report naming every Act it left out and why,
+every provision an Act's contents list names that did not make it, and every span it
+dropped for running away. Nothing is dropped silently.
+
+Two refusals in the importer are deliberate. An Act whose header carries no date keeps
+the year from its title with `start_known: false` rather than a date invented to the day,
+because a guessed commencement answers "what was the law on 3 March 1997" with an Act
+that had not yet been passed. And an Act the index annotates as repealed is dated from
+that note — unread, every provision of all 86 such Acts is served as the law in force
+today, which is the failure this whole package exists to prevent.
+
 ---
 
 ## Corpus validation
@@ -550,14 +588,21 @@ Run them with
 
 ## Limits
 
-- **No corpus ships with this repo.** The Pakistan Code is public and `paklaw-corpus`
-  builds one from it, but getting the in-force dates right is the part that matters and
-  the part no tool can do for you. The sample provisions in the package and the tests
-  are illustrative and unofficial. **Do not rely on them.**
-- **The importer was tested on text laid out like Pakistan Code, not on a downloaded
-  Act.** pakistancode.gov.pk refused connections and na.gov.pk served about 200 bytes a
-  second while this was being built. A real Act's layout may differ from the fixture, so
-  read the import report before loading the result.
+- **The shipped corpus is consolidated text, not an official publication.** It is the
+  Pakistan Code as the Ministry publishes it, imported automatically. 91.9% of its Acts
+  carry a commencement date read from their own header; the rest keep the year from
+  their title and say so (`start_known: false`). 0.9% of the provisions each Act's own
+  contents list names are not in it. **Check anything you rely on against the gazette.**
+- **A bigger corpus weakens the "that word is nowhere in the statute book" refusal.**
+  Over thirteen provisions, a word the corpus has never seen is a strong signal that the
+  question is not a legal one. Over 30,131 provisions almost every English word appears
+  somewhere. Measured on eight plainly non-legal questions ("how do I bake a chocolate
+  cake?", "how much should I pay for a used car in Lahore?"), the sample refuses all
+  eight and the full corpus refuses four — each of the four answered at a coverage of
+  0.75 or below, while all six legal questions in the same run were answered at 1.0.
+  Setting `PAKLAW_MIN_COVERAGE=0.75` refuses all eight and keeps all six, at the cost of
+  two correct answers on the 105-question fixture set. The default is left at 0.5
+  because 105 questions back it and eight back the other number.
 - A bare `Article 25` is read as the Constitution's, which is what it means in nearly all
   Pakistani writing. An article of any other instrument has to be named (`Article 17 QSO`).
 - Relevance is lexical, and the refusals cost recall. `meaning` does not reach `denotes`,

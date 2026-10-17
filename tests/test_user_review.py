@@ -203,7 +203,13 @@ def test_registry_manifest_matches_the_package():
     # a registry client runs `uvx <identifier>`, which needs a script of that name
     assert project["scripts"][project["name"]] == "paklaw.mcp_server:main"
     assert len(manifest["description"]) <= 100
-    assert [v["name"] for v in package["environmentVariables"]] == ["PAKLAW_CORPUS"]
+    # Every variable the server reads, so a new one cannot be added without saying so
+    # here: a client of the registry configures the server from this list.
+    assert [v["name"] for v in package["environmentVariables"]] == [
+        "PAKLAW_CORPUS",
+        "PAKLAW_MIN_COVERAGE",
+        "PAKLAW_TELEMETRY",
+    ]
 
     # PyPI ownership check: the README (the PyPI description) names the server
     readme = (ROOT / "README.md").read_text(encoding="utf-8")

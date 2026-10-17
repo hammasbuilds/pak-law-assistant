@@ -448,7 +448,13 @@ class LawAssistant:
             named = find_statute(question, extra=self.aliases)
             if named is not None:
                 statute, phrase = named
-                asked = re.sub(re.escape(phrase), " ", question, flags=re.I)
+                # Whole words only, and the same boundaries `find_statute` matched on.
+                # Without them this removed every OCCURRENCE OF THE LETTERS anywhere in
+                # the question: over a corpus holding the Antiquities Act under the key
+                # `A`, "what rights does a deaf person have to access the media?" had
+                # every "a" deleted and was refused because 'ccess' and 'wh' appear in
+                # no provision - a refusal quoting words the reader never wrote.
+                asked = re.sub(rf"(?<![\w.]){re.escape(phrase)}(?![\w])", " ", question, flags=re.I)
 
         hits = self.search.search(asked, as_of=as_of_date, limit=self.max_passages, statute=statute)
 

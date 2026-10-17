@@ -81,6 +81,24 @@ _STRUCTURED = {"2025-11-25", "2025-06-18"}
 SERVER_NAME = "pak-law-assistant"
 CORPUS_ENV = "PAKLAW_CORPUS"
 
+#: The share of a question's content words a provision must carry, overriding
+#: `LawAssistant.min_coverage`.
+#:
+#: Exposed because the right value depends on how big the corpus is, and until now it
+#: could only be changed by editing the source. The default was chosen over a
+#: thirteen-provision fixture, where a word absent from the whole corpus is a strong
+#: signal that the question is not a legal one. Over the 970-Act statute book almost
+#: every English word appears somewhere, so that test is much weaker: of eight plainly
+#: non-legal questions ("how do I bake a chocolate cake?", "how much should I pay for a
+#: used car in Lahore?"), the shipped corpus refuses four and answers four - each of the
+#: four at a coverage of 0.75 or below, while every correct legal answer sat at 1.0.
+#:
+#: Raising it to 0.75 refuses all eight and keeps all six legal questions answered, at
+#: the cost of two correct answers on the fixture set. The default is left alone because
+#: 105 questions back it and eight back the other number; this is the lever for an
+#: operator running a corpus the size of the one that ships here.
+COVERAGE_ENV = "PAKLAW_MIN_COVERAGE"
+
 SAMPLE_WARNING = (
     "sample corpus: three demonstration provisions (PECA s.20 in two versions, PPC s.302, "
     "Article 25) with illustrative, unofficial wording — not the statute book and not to "
@@ -725,6 +743,25 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+def _coverage_setting() -> dict:
+    """`{"min_coverage": x}` from the environment, or `{}` to keep the default.
+
+    A bad value is refused rather than ignored. Silently falling back to the default
+    would leave an operator who set `PAKLAW_MIN_COVERAGE=0.8%` believing the server was
+    stricter than it is, which is the direction that produces confident wrong answers.
+    """
+    raw = (os.environ.get(COVERAGE_ENV) or "").strip()
+    if not raw:
+        return {}
+    try:
+        value = float(raw)
+    except ValueError:
+        raise CorpusError(f"{COVERAGE_ENV}={raw!r} is not a number") from None
+    if not 0.0 <= value <= 1.0:
+        raise CorpusError(f"{COVERAGE_ENV}={raw!r} is not a share between 0 and 1")
+    return {"min_coverage": value}
+
+
 class ToolError(ValueError):
     """A bad argument. Reported to the model as a tool result it can correct, not a crash."""
 
@@ -879,7 +916,7 @@ class LawServer:
     def __init__(self, corpus: Corpus, source: str) -> None:
         self.corpus = corpus
         self.source = source
-        self.assistant = LawAssistant(corpus=corpus)
+        self.assistant = LawAssistant(corpus=corpus, **_coverage_setting())
         self.loaded = sorted({p.statute for p in corpus})
         self.aliases = statute_aliases(self.loaded)
         self.protocol_version: str | None = None

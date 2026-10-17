@@ -656,6 +656,18 @@ def resolve_bare(citations: list[Citation], *, default_statute: str) -> list[Cit
 # Statute names, longest first, so "pakistan penal code" is preferred over "penal code".
 
 
+#: Aliases that are ordinary English before they are anything else. A corpus names its
+#: own statutes, and a key generated from initials can come out as a single letter - the
+#: Antiquities Act 1975 reduces to `A` - which then matches the article "a" in any
+#: question as a whole word. It scopes the question to that Act and takes the word out of
+#: it, so the reader is told their question is about antiquities. A statute key this
+#: short carries no information about which Act is meant even when it IS meant, so the
+#: cost of ignoring it here is nothing against a failure that reads as gibberish.
+NOT_A_STATUTE_NAME = frozenset(
+    {"a", "an", "the", "at", "in", "of", "on", "to", "by", "is", "it", "or", "as", "be", "no"}
+)
+
+
 def find_statute(text: str, *, extra: dict[str, str] | None = None) -> tuple[str, str] | None:
     """A statute named in a question, and the words that named it.
 
@@ -678,6 +690,8 @@ def find_statute(text: str, *, extra: dict[str, str] | None = None) -> tuple[str
     lowered = re.sub(r"\s+", " ", text.lower())
     phrases = sorted(table, key=len, reverse=True)
     for phrase in phrases:
+        if phrase in NOT_A_STATUTE_NAME:
+            continue
         # Whole words only: "code" must not match inside "coded", and a two-letter key
         # must not match inside another word.
         if re.search(rf"(?<![\w.]){re.escape(phrase)}(?![\w])", lowered):

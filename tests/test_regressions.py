@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import time
 
 import pytest
@@ -836,3 +837,96 @@ def test_every_runnable_script_exists(script):
     from pathlib import Path
 
     assert (Path(__file__).resolve().parents[1] / script).is_file(), script
+
+
+# ---- a statute key short enough to be an English word --------------------------------
+
+
+def _short_key_corpus() -> LawAssistant:
+    """A corpus holding an Act under the key `A`, as the Pakistan Code's own Antiquities
+    Act 1975 did when its key was generated from the title's initials."""
+    return LawAssistant(
+        corpus=build(
+            [
+                {
+                    "statute": "A",
+                    "unit": "section",
+                    "number": "12",
+                    "heading": "Export of antiquities",
+                    "text": "No person shall export any antiquity without a licence.",
+                    "in_force_from": "1975-01-01",
+                },
+                {
+                    "statute": "AMDP",
+                    "unit": "section",
+                    "number": "3",
+                    "heading": "Responsibility of the Authority",
+                    "text": (
+                        "The Authority shall ensure the rights of a deaf person to access "
+                        "the media through sign language interpretation of news bulletins."
+                    ),
+                    "in_force_from": "2022-02-28",
+                },
+            ]
+        )
+    )
+
+
+def test_a_one_letter_statute_key_does_not_eat_the_question():
+    """Observed: "what rights does a deaf person have to access the media?" refused with
+    "'ccess', 'wh' appear in no provision here".
+
+    `find_statute` matched the article "a" as a whole word against the key `A`, and the
+    caller then removed the phrase with an unanchored `re.sub` - deleting every letter
+    "a" in the question. The refusal quoted fragments the reader never wrote, about a
+    corpus that holds the answer.
+    """
+    answer = _short_key_corpus().answer(
+        "what rights does a deaf person have to access the media?", as_of="2026-01-01"
+    )
+    assert not answer.refused, answer.refusal_reason
+    assert answer.passages[0].citation == "Section 3 AMDP"
+
+
+def test_no_refusal_ever_quotes_a_word_the_question_does_not_contain():
+    """The general form of the same defect: a refusal states a fact about the reader's
+    own words, so every word it quotes has to be one of them."""
+    assistant = _short_key_corpus()
+    question = "what is the penalty for dacoity with murder in a dwelling at night?"
+    answer = assistant.answer(question, as_of="2026-01-01")
+    assert answer.refused
+    for quoted in re.findall(r"'([^']+)'", answer.refusal_reason):
+        assert quoted.lower() in question.lower(), (quoted, answer.refusal_reason)
+
+
+def test_scoping_to_an_act_removes_the_name_and_not_the_letters():
+    """The other half of the same defect, isolated.
+
+    `NOT_A_STATUTE_NAME` keeps a one-letter key from ever being matched, which hides the
+    unanchored `re.sub` behind it. A key that is a real word - `ART` - is matched
+    legitimately, and then the substitution has to take out the NAME and leave
+    "department" alone. Unanchored it becomes "dep ment", and the question is refused
+    over a word the reader never wrote.
+    """
+    assistant = LawAssistant(
+        corpus=build(
+            [
+                {
+                    "statute": "ART",
+                    "unit": "section",
+                    "number": "4",
+                    "heading": "Export of works",
+                    "text": (
+                        "No department shall permit the export of a work without the "
+                        "written approval of the Director General."
+                    ),
+                    "in_force_from": "1975-01-01",
+                }
+            ]
+        )
+    )
+    answer = assistant.answer(
+        "under the ART, may a department permit the export of a work?", as_of="2026-01-01"
+    )
+    assert not answer.refused, answer.refusal_reason
+    assert answer.passages[0].citation == "Section 4 ART"
