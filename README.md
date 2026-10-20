@@ -79,6 +79,68 @@ PPC with its dates and text.*
 refused. Never the question - a legal question is the one thing a log of this server
 must not keep.*
 
+### Every tool, driven end to end
+
+[`docs/demo/pak-law-assistant-demo.mp4`](docs/demo/pak-law-assistant-demo.mp4) - a minute
+in the browser, over the full statute book: the three prepared scenarios, a draft checked
+as at a date, and all eight tools called by hand. The screenshots below are frames of
+that run.
+
+![About, and what it will not do](docs/screenshots/06-about-and-limits.png)
+*What each of the eight tools answers, the five things it refuses to do, and which corpus
+is loaded - 30,174 provisions across 970 Acts.*
+
+![The same question, two dates](docs/screenshots/07-same-question-two-dates.png)
+*One sentence sent twice, changing only the date it is asked about. The answers differ,
+and a corpus with no dates would hand you one of them without saying which.*
+
+![Auditing a draft](docs/screenshots/08-audit-a-draft.png)
+*Three citations in one sentence, checked against the corpus as it stood on the draft's
+date - each gets a different answer, including "I do not hold this."*
+
+![A refusal, on purpose](docs/screenshots/09-a-refusal-on-purpose.png)
+*A question the corpus cannot support. It names the words it looked for and refuses,
+rather than returning the nearest-looking provision.*
+
+![Checking your own draft](docs/screenshots/10-check-your-own-draft.png)
+*Input: a paragraph citing s.379 PPC, s.497 CrPC and s.3 PECA, as at 1 January 2018.
+Output: each citation with its heading and whether it was in force on that date.*
+
+![answer_question](docs/screenshots/11-tool-answer-question.png)
+*Input: "What is the punishment for cyber stalking?" as of 2018-01-01. Output: section 24
+PECA with its text, the window it has been in force, and the terms that matched.*
+
+![Refused for the date](docs/screenshots/12-tool-refused-for-the-date.png)
+*The same tool, the same question about theft, asked as of 1850. Refused - and the
+refusal says which words it searched for and which statutes this corpus does not record
+that far back.*
+
+![provision_history](docs/screenshots/13-tool-provision-history.png)
+*Every version of section 302 PPC, with the date it came into force and the instrument
+that amended it.*
+
+![compare_versions](docs/screenshots/14-tool-compare-versions.png)
+*Section 379 PPC at 2015-01-01 and at 2024-01-01, side by side.*
+
+![list_provisions](docs/screenshots/15-tool-list-provisions.png)
+*What the Companies Ordinance 1984 contained on 1 January 2024: nothing. All 524
+provisions are held, and none of them was in force on that date.*
+
+![changes_between](docs/screenshots/16-tool-changes-between.png)
+*The same Ordinance across 1984-2024, as events with their dates.*
+
+![parse_citations](docs/screenshots/17-tool-parse-citations.png)
+*Input: a sentence citing both section 302 PPC and section 302 of the Indian Penal Code.
+Output: the first is held here; the second is reported as an Act not recognised, not read
+as the Pakistani section of the same number.*
+
+![corpus_info](docs/screenshots/18-tool-corpus-info.png)
+*What is actually loaded: provisions, versions, and the statutes, so a claim about the
+corpus can be checked rather than taken.*
+
+![Dark](docs/screenshots/19-dark.png)
+*The same page in the dark theme.*
+
 ## Sample input / output
 
 `python demo.py` runs on a three-provision sample that carries PECA s.20 before and after its 2022 substitution
