@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>provision_history - pak-law-assistant</title>
+<style>
+  :root {
+    --accent: #b4304f; --accent-soft: #7d2238;
+    --bg0: #120a0d; --bg1: #1d1013; --ink: #f6eef0; --dim: #b89aa1;
+    --top: #3a2429; --left: #241519; --right: #1a0f12;
+    --edge: #4e3038; --grid: #2a171c;
+    --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg0); }
+  body { display: grid; place-items: center; }
+  .frame { width: 100%; max-width: 1280px; aspect-ratio: 16 / 9; }
+  svg { display: block; width: 100%; height: 100%; }
+
+  .sky { fill: url(#sky); }
+  .grid line { stroke: var(--grid); stroke-width: 1; opacity: .55; }
+  .shadow { fill: #000; opacity: .32; filter: url(#soft); }
+  .rail { stroke: var(--edge); stroke-width: 2; stroke-dasharray: 4 6; opacity: .75; }
+  .flow { stroke: var(--accent); stroke-width: 3; stroke-linecap: round;
+           stroke-dasharray: 18 18; opacity: 0; }
+
+  .face { stroke: var(--edge); stroke-width: 1.2; stroke-linejoin: round; }
+  .face.top { fill: var(--top); }
+  .face.top.end { fill: var(--accent-soft); }
+  .face.left { fill: var(--left); }
+  .face.right { fill: var(--right); }
+  .lit { fill: var(--accent); opacity: 0; filter: url(#glow); }
+
+  .slabname { font: 600 15px/1 var(--mono); fill: var(--dim); text-anchor: middle;
+               letter-spacing: .04em; }
+
+  .tk-top { fill: #fff; }
+  .tk-left { fill: var(--accent); }
+  .tk-right { fill: var(--accent-soft); }
+  .token { filter: url(#glow); }
+
+  .caption { opacity: 0; }
+  .cap-step { font: 700 26px/1 var(--mono); fill: var(--accent); }
+  .cap-name { font: 700 26px/1 var(--mono); fill: var(--ink); letter-spacing: .02em; }
+  .cap-note { font: 400 19px/1 var(--mono); fill: var(--dim); }
+
+  .card rect { fill: rgba(255,255,255,.035); stroke: var(--edge); stroke-width: 1.2; }
+  .card-label { font: 700 13px/1 var(--mono); fill: var(--accent); letter-spacing: .18em; }
+  .card-line { font: 400 17px/1 var(--mono); fill: var(--ink); }
+  .tie { stroke: var(--edge); stroke-width: 1.5; stroke-dasharray: 3 5; }
+
+  .title { font: 700 34px/1 var(--mono); fill: var(--ink); letter-spacing: -.01em; }
+  .subtitle { font: 400 19px/1 var(--mono); fill: var(--dim); }
+  .repo { font: 600 15px/1 var(--mono); fill: var(--accent); text-anchor: end;
+           letter-spacing: .1em; }
+  .footer { font: 400 14px/1 var(--mono); fill: var(--dim); }
+  .bar-bg { fill: var(--edge); opacity: .4; }
+  .bar { fill: var(--accent); }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* The still frame is the end of the run: every slab lit and the output showing. */
+    * { animation: none !important; }
+    .lit, .out, .caption { opacity: 1 !important; }
+  }
+</style>
+</head>
+<body>
+<div class="frame">
+<svg viewBox="0 0 1280 720" role="img" aria-label="provision_history - pak-law-assistant">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#1d1013"/>
+      <stop offset="1" stop-color="#120a0d"/>
+    </linearGradient>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect class="sky" x="0" y="0" width="1280" height="720"/>
+  <g class="grid"><line x1="640.0" y1="-347.6" x2="-915.2" y2="430.0"/><line x1="640.0" y1="-347.6" x2="2195.2" y2="430.0"/><line x1="726.4" y1="-304.4" x2="-828.8" y2="473.2"/><line x1="553.6" y1="-304.4" x2="2108.8" y2="473.2"/><line x1="812.8" y1="-261.2" x2="-742.4" y2="516.4"/><line x1="467.2" y1="-261.2" x2="2022.4" y2="516.4"/><line x1="899.2" y1="-218.0" x2="-656.0" y2="559.6"/><line x1="380.8" y1="-218.0" x2="1936.0" y2="559.6"/><line x1="985.6" y1="-174.8" x2="-569.6" y2="602.8"/><line x1="294.4" y1="-174.8" x2="1849.6" y2="602.8"/><line x1="1072.0" y1="-131.6" x2="-483.2" y2="646.0"/><line x1="208.0" y1="-131.6" x2="1763.2" y2="646.0"/><line x1="1158.4" y1="-88.4" x2="-396.8" y2="689.2"/><line x1="121.6" y1="-88.4" x2="1676.8" y2="689.2"/><line x1="1244.8" y1="-45.2" x2="-310.4" y2="732.4"/><line x1="35.2" y1="-45.2" x2="1590.4" y2="732.4"/><line x1="1331.2" y1="-2.0" x2="-224.0" y2="775.6"/><line x1="-51.2" y1="-2.0" x2="1504.0" y2="775.6"/><line x1="1417.6" y1="41.2" x2="-137.6" y2="818.8"/><line x1="-137.6" y1="41.2" x2="1417.6" y2="818.8"/><line x1="1504.0" y1="84.4" x2="-51.2" y2="862.0"/><line x1="-224.0" y1="84.4" x2="1331.2" y2="862.0"/><line x1="1590.4" y1="127.6" x2="35.2" y2="905.2"/><line x1="-310.4" y1="127.6" x2="1244.8" y2="905.2"/><line x1="1676.8" y1="170.8" x2="121.6" y2="948.4"/><line x1="-396.8" y1="170.8" x2="1158.4" y2="948.4"/><line x1="1763.2" y1="214.0" x2="208.0" y2="991.6"/><line x1="-483.2" y1="214.0" x2="1072.0" y2="991.6"/><line x1="1849.6" y1="257.2" x2="294.4" y2="1034.8"/><line x1="-569.6" y1="257.2" x2="985.6" y2="1034.8"/><line x1="1936.0" y1="300.4" x2="380.8" y2="1078.0"/><line x1="-656.0" y1="300.4" x2="899.2" y2="1078.0"/><line x1="2022.4" y1="343.6" x2="467.2" y2="1121.2"/><line x1="-742.4" y1="343.6" x2="812.8" y2="1121.2"/><line x1="2108.8" y1="386.8" x2="553.6" y2="1164.4"/><line x1="-828.8" y1="386.8" x2="726.4" y2="1164.4"/><line x1="2195.2" y1="430.0" x2="640.0" y2="1207.6"/><line x1="-915.2" y1="430.0" x2="640.0" y2="1207.6"/><line x1="2281.6" y1="473.2" x2="726.4" y2="1250.8"/><line x1="-1001.6" y1="473.2" x2="553.6" y2="1250.8"/><line x1="2368.0" y1="516.4" x2="812.8" y2="1294.0"/><line x1="-1088.0" y1="516.4" x2="467.2" y2="1294.0"/><line x1="2454.4" y1="559.6" x2="899.2" y2="1337.2"/><line x1="-1174.4" y1="559.6" x2="380.8" y2="1337.2"/><line x1="2540.8" y1="602.8" x2="985.6" y2="1380.4"/><line x1="-1260.8" y1="602.8" x2="294.4" y2="1380.4"/></g>
+<g><line class="rail" x1="468.0" y1="286.0" x2="599.6" y2="319.2"/><line class="flow f0" x1="468.0" y1="286.0" x2="599.6" y2="319.2"/><line class="rail" x1="599.6" y1="319.2" x2="731.2" y2="352.4"/><line class="flow f1" x1="599.6" y1="319.2" x2="731.2" y2="352.4"/><line class="rail" x1="731.2" y1="352.4" x2="862.8" y2="385.6"/><line class="flow f2" x1="731.2" y1="352.4" x2="862.8" y2="385.6"/><line class="rail" x1="862.8" y1="385.6" x2="994.4" y2="418.8"/><line class="flow f3" x1="862.8" y1="385.6" x2="994.4" y2="418.8"/><line class="rail" x1="994.4" y1="418.8" x2="1126.0" y2="452.0"/><line class="flow f4" x1="994.4" y1="418.8" x2="1126.0" y2="452.0"/></g>
+<g class="slab" transform="translate(468.0,272.6)">
+  <ellipse class="shadow" cx="0" cy="53.4" rx="75" ry="20"/>
+  <polygon class="face left" points="-78.7,13.4 0.0,52.7 0.0,78.7 -78.7,39.4"/>
+  <polygon class="face right" points="78.7,13.4 0.0,52.7 0.0,78.7 78.7,39.4"/>
+  <polygon class="face top end" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+  <polygon class="lit s0" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+</g>
+<text class="slabname n0" x="468.0" y="240.0">input</text>
+<g class="slab" transform="translate(599.6,305.8)">
+  <ellipse class="shadow" cx="0" cy="53.4" rx="75" ry="20"/>
+  <polygon class="face left" points="-78.7,13.4 0.0,52.7 0.0,78.7 -78.7,39.4"/>
+  <polygon class="face right" points="78.7,13.4 0.0,52.7 0.0,78.7 78.7,39.4"/>
+  <polygon class="face top" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+  <polygon class="lit s1" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+</g>
+<text class="slabname n1" x="599.6" y="273.2">resolve</text>
+<g class="slab" transform="translate(731.2,339.0)">
+  <ellipse class="shadow" cx="0" cy="53.4" rx="75" ry="20"/>
+  <polygon class="face left" points="-78.7,13.4 0.0,52.7 0.0,78.7 -78.7,39.4"/>
+  <polygon class="face right" points="78.7,13.4 0.0,52.7 0.0,78.7 78.7,39.4"/>
+  <polygon class="face top" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+  <polygon class="lit s2" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+</g>
+<text class="slabname n2" x="731.2" y="306.4">versions</text>
+<g class="slab" transform="translate(862.8,372.2)">
+  <ellipse class="shadow" cx="0" cy="53.4" rx="75" ry="20"/>
+  <polygon class="face left" points="-78.7,13.4 0.0,52.7 0.0,78.7 -78.7,39.4"/>
+  <polygon class="face right" points="78.7,13.4 0.0,52.7 0.0,78.7 78.7,39.4"/>
+  <polygon class="face top" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+  <polygon class="lit s3" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+</g>
+<text class="slabname n3" x="862.8" y="339.6">windows</text>
+<g class="slab" transform="translate(994.4,405.4)">
+  <ellipse class="shadow" cx="0" cy="53.4" rx="75" ry="20"/>
+  <polygon class="face left" points="-78.7,13.4 0.0,52.7 0.0,78.7 -78.7,39.4"/>
+  <polygon class="face right" points="78.7,13.4 0.0,52.7 0.0,78.7 78.7,39.4"/>
+  <polygon class="face top" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+  <polygon class="lit s4" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+</g>
+<text class="slabname n4" x="994.4" y="372.8">by what</text>
+<g class="slab" transform="translate(1126.0,438.6)">
+  <ellipse class="shadow" cx="0" cy="53.4" rx="75" ry="20"/>
+  <polygon class="face left" points="-78.7,13.4 0.0,52.7 0.0,78.7 -78.7,39.4"/>
+  <polygon class="face right" points="78.7,13.4 0.0,52.7 0.0,78.7 78.7,39.4"/>
+  <polygon class="face top end" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+  <polygon class="lit s5" points="0.0,-26.0 78.7,13.4 0.0,52.7 -78.7,13.4"/>
+</g>
+<text class="slabname n5" x="1126.0" y="406.0">output</text>
+<g class="token"><polygon class="tk-top" points="0,-11 13,-4 0,3 -13,-4"/><polygon class="tk-left" points="-13,-4 0,3 0,14 -13,7"/><polygon class="tk-right" points="13,-4 0,3 0,14 13,7"/></g>
+<g class="caption c1"><text class="cap-step" x="96" y="566">01</text><text class="cap-name" x="150" y="566">resolve</text><text class="cap-note" x="150" y="596">the citation to one key in one Act</text></g>
+<g class="caption c2"><text class="cap-step" x="96" y="566">02</text><text class="cap-name" x="150" y="566">versions</text><text class="cap-note" x="150" y="596">every text this provision has ever had, oldest first</text></g>
+<g class="caption c3"><text class="cap-step" x="96" y="566">03</text><text class="cap-name" x="150" y="566">windows</text><text class="cap-note" x="150" y="596">the dates each version was the one in force</text></g>
+<g class="caption c4"><text class="cap-step" x="96" y="566">04</text><text class="cap-name" x="150" y="566">by what</text><text class="cap-note" x="150" y="596">the instrument that amended it, where it is recorded</text></g>
+<g class="card in"><rect x="96" y="152" width="320" height="124" rx="10"/><text class="card-label" x="114" y="180">INPUT</text><text class="card-line" x="114" y="210">citation  section 302</text><text class="card-line" x="114" y="236">statute   PPC</text><text class="card-line" x="114" y="262">with_text true</text></g>
+<g class="card out"><rect x="864" y="538" width="320" height="150" rx="10"/><text class="card-label" x="882" y="566">OUTPUT</text><text class="card-line" x="882" y="596">Section 302 PPC</text><text class="card-line" x="882" y="622">1 version</text><text class="card-line" x="882" y="648">1860-10-06 → current</text><text class="card-line" x="882" y="674">Punishment of qatl-i-amd</text></g>
+<line class="tie" x1="376" y1="276" x2="442.0" y2="264.0"/>
+<line class="tie" x1="1152.0" y1="476.0" x2="904" y2="538"/>
+<rect class="bar-bg" x="96" y="684" width="740" height="3" rx="1.5"/>
+<rect class="bar" x="96" y="684" width="740" height="3" rx="1.5"/>
+  <!-- The title block is painted last so nothing in the scene can cross it. -->
+  <text class="title" x="96" y="78">provision_history</text><text class="subtitle" x="96" y="112">every version of one provision</text><text class="repo" x="1184" y="78">pak-law-assistant</text>
+  <text class="footer" x="96" y="672">one version is a fact about the corpus, not about the law</text>
+</svg>
+</div>
+<style>
+
+.f0 { animation: flow0 14.20s linear infinite; }
+@keyframes flow0 {
+  0%, 10.21% { stroke-dashoffset: 36; opacity: 0; }
+  10.22% { opacity: .95; }
+  15.28%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+.f1 { animation: flow1 14.20s linear infinite; }
+@keyframes flow1 {
+  0%, 25.49% { stroke-dashoffset: 36; opacity: 0; }
+  25.50% { opacity: .95; }
+  30.56%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+.f2 { animation: flow2 14.20s linear infinite; }
+@keyframes flow2 {
+  0%, 40.77% { stroke-dashoffset: 36; opacity: 0; }
+  40.78% { opacity: .95; }
+  45.85%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+.f3 { animation: flow3 14.20s linear infinite; }
+@keyframes flow3 {
+  0%, 56.06% { stroke-dashoffset: 36; opacity: 0; }
+  56.07% { opacity: .95; }
+  61.13%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+.f4 { animation: flow4 14.20s linear infinite; }
+@keyframes flow4 {
+  0%, 71.34% { stroke-dashoffset: 36; opacity: 0; }
+  71.35% { opacity: .95; }
+  76.41%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+.s0 { animation: lit0 14.20s linear infinite; }
+@keyframes lit0 {
+  0%, 0.00% { opacity: 0; }
+  0.00%, 10.21% { opacity: 1; }
+  12.21%, 100% { opacity: 0; }
+}
+
+.n0 { animation: name0 14.20s linear infinite; }
+@keyframes name0 {
+  0%, 0.00% { fill: #b89aa1; }
+  0.00%, 10.21% { fill: #f6eef0; }
+  12.21%, 100% { fill: #b89aa1; }
+}
+
+.s1 { animation: lit1 14.20s linear infinite; }
+@keyframes lit1 {
+  0%, 14.08% { opacity: 0; }
+  15.28%, 25.49% { opacity: 1; }
+  27.49%, 100% { opacity: 0; }
+}
+
+.n1 { animation: name1 14.20s linear infinite; }
+@keyframes name1 {
+  0%, 14.08% { fill: #b89aa1; }
+  15.28%, 25.49% { fill: #f6eef0; }
+  27.49%, 100% { fill: #b89aa1; }
+}
+
+.s2 { animation: lit2 14.20s linear infinite; }
+@keyframes lit2 {
+  0%, 29.36% { opacity: 0; }
+  30.56%, 40.77% { opacity: 1; }
+  42.77%, 100% { opacity: 0; }
+}
+
+.n2 { animation: name2 14.20s linear infinite; }
+@keyframes name2 {
+  0%, 29.36% { fill: #b89aa1; }
+  30.56%, 40.77% { fill: #f6eef0; }
+  42.77%, 100% { fill: #b89aa1; }
+}
+
+.s3 { animation: lit3 14.20s linear infinite; }
+@keyframes lit3 {
+  0%, 44.65% { opacity: 0; }
+  45.85%, 56.06% { opacity: 1; }
+  58.06%, 100% { opacity: 0; }
+}
+
+.n3 { animation: name3 14.20s linear infinite; }
+@keyframes name3 {
+  0%, 44.65% { fill: #b89aa1; }
+  45.85%, 56.06% { fill: #f6eef0; }
+  58.06%, 100% { fill: #b89aa1; }
+}
+
+.s4 { animation: lit4 14.20s linear infinite; }
+@keyframes lit4 {
+  0%, 59.93% { opacity: 0; }
+  61.13%, 71.34% { opacity: 1; }
+  73.34%, 100% { opacity: 0; }
+}
+
+.n4 { animation: name4 14.20s linear infinite; }
+@keyframes name4 {
+  0%, 59.93% { fill: #b89aa1; }
+  61.13%, 71.34% { fill: #f6eef0; }
+  73.34%, 100% { fill: #b89aa1; }
+}
+
+.s5 { animation: lit5 14.20s linear infinite; }
+@keyframes lit5 {
+  0%, 75.21% { opacity: 0; }
+  76.41%, 100.00% { opacity: 1; }
+  100.00%, 100% { opacity: 0; }
+}
+
+.n5 { animation: name5 14.20s linear infinite; }
+@keyframes name5 {
+  0%, 75.21% { fill: #b89aa1; }
+  76.41%, 100.00% { fill: #f6eef0; }
+  100.00%, 100% { fill: #b89aa1; }
+}
+
+.token { offset-path: path('M 468.0 286.0 L 599.6 319.2 L 731.2 352.4 L 862.8 385.6 L 994.4 418.8 L 1126.0 452.0'); animation: walk 14.20s linear infinite; }
+@keyframes walk {
+  0.00% { offset-distance: 0.00%; }
+  10.21% { offset-distance: 0.00%; }
+  15.28% { offset-distance: 20.00%; }
+  25.49% { offset-distance: 20.00%; }
+  30.56% { offset-distance: 40.00%; }
+  40.77% { offset-distance: 40.00%; }
+  45.85% { offset-distance: 60.00%; }
+  56.06% { offset-distance: 60.00%; }
+  61.13% { offset-distance: 80.00%; }
+  71.34% { offset-distance: 80.00%; }
+  76.41% { offset-distance: 100.00%; }
+  100.00% { offset-distance: 100.00%; }
+}
+
+.c1 { animation: cap1 14.20s linear infinite; }
+@keyframes cap1 {
+  0%, 14.48% { opacity: 0; transform: translateY(8px); }
+  16.28%, 25.49% { opacity: 1; transform: translateY(0); }
+  26.69%, 100% { opacity: 0; transform: translateY(-6px); }
+}
+
+.c2 { animation: cap2 14.20s linear infinite; }
+@keyframes cap2 {
+  0%, 29.76% { opacity: 0; transform: translateY(8px); }
+  31.56%, 40.77% { opacity: 1; transform: translateY(0); }
+  41.97%, 100% { opacity: 0; transform: translateY(-6px); }
+}
+
+.c3 { animation: cap3 14.20s linear infinite; }
+@keyframes cap3 {
+  0%, 45.05% { opacity: 0; transform: translateY(8px); }
+  46.85%, 56.06% { opacity: 1; transform: translateY(0); }
+  57.26%, 100% { opacity: 0; transform: translateY(-6px); }
+}
+
+.c4 { animation: cap4 14.20s linear infinite; }
+@keyframes cap4 {
+  0%, 60.33% { opacity: 0; transform: translateY(8px); }
+  62.13%, 71.34% { opacity: 1; transform: translateY(0); }
+  72.54%, 100% { opacity: 0; transform: translateY(-6px); }
+}
+
+.out { animation: reveal 14.20s linear infinite; }
+@keyframes reveal {
+  0%, 75.81% { opacity: 0; transform: translate(12px, 8px); }
+  78.01%, 100% { opacity: 1; transform: translate(0, 0); }
+}
+
+.bar { animation: bar 14.20s linear infinite; transform-origin: 96px 0; }
+@keyframes bar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+</style>
+</body>
+</html>
