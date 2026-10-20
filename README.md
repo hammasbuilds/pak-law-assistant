@@ -74,6 +74,11 @@ citation flagged "Act not held here" rather than read as a Pakistani section.*
 *"What is the punishment for murder?" as of 1 June 2024, limited to the PPC, at 390 px in the dark theme: section 302
 PPC with its dates and text.*
 
+![The call console](docs/screenshots/05-console.png)
+*Every tool call the server answered: which tool, how long it took, and whether it
+refused. Never the question - a legal question is the one thing a log of this server
+must not keep.*
+
 ## Sample input / output
 
 `python demo.py` runs on a three-provision sample that carries PECA s.20 before and after its 2022 substitution
