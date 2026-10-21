@@ -143,12 +143,14 @@ corpus can be checked rather than taken.*
 
 ### How it works, in motion
 
-Every tool in this repository as an isometric animation, plus two that show the architecture. A **flow**
-follows one call from the arguments to the answer and names what each stage does to it; an **architecture**
-view shows the four layers of the package, the modules on them at their real sizes, and the path a call
-takes through them. Each is one self-contained HTML file - no build step, no dependencies, no network.
+Every tool in this repository, twice over. A **flow** follows one call from the arguments to the answer and
+names what each stage does to it. An **architecture** view shows the four layers of the package with the
+modules on them at their real sizes, and lights up the ones that particular tool walks - `corpus_info` reads
+the corpus and stops; `check_citations` goes through the citation reader, the Act index and the audit before
+it answers. Each is one self-contained HTML file with a poster and a clip beside it - no build step, no
+dependencies, no network.
 
-All 11 are in [`docs/isometric/`](docs/isometric/) — [start at the index](docs/isometric/index.html). 2
+All 19 are in [`docs/isometric/`](docs/isometric/) — [start at the index](docs/isometric/index.html). 10
 architecture, 9 flow.
 
 ![pak-law-assistant](docs/isometric/scenes/arch-paklaw.gif)
@@ -162,6 +164,12 @@ animation](docs/isometric/scenes/arch-paklaw.html) · [mp4](docs/isometric/scene
 postings for one date only, scored - and either cited, or refused with the words it looked for named.* ·
 [open the animation](docs/isometric/scenes/arch-paklaw-retrieval.html) ·
 [mp4](docs/isometric/scenes/arch-paklaw-retrieval.mp4)
+
+![corpus_info](docs/isometric/scenes/arch-paklaw-corpus-info.png)
+*The same four layers, for the one tool that touches fewest of them: `corpus_info` reads what is loaded and
+counts it, and the point of it is that its answer is what every other claim about the corpus can be checked
+against.* · [open the animation](docs/isometric/scenes/arch-paklaw-corpus-info.html) ·
+[mp4](docs/isometric/scenes/arch-paklaw-corpus-info.mp4)
 
 ![answer_question](docs/isometric/scenes/flow-paklaw-answer-question.png)
 *The flow view of one tool: "What is the punishment for cyber stalking?" as of 1 January 2018 goes in,
