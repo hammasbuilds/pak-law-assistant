@@ -141,43 +141,6 @@ corpus can be checked rather than taken.*
 ![Dark](docs/screenshots/19-dark.png)
 *The same page in the dark theme.*
 
-### How it works, in motion
-
-Every tool in this repository, twice over. A **flow** follows one call from the arguments to the answer and
-names what each stage does to it. An **architecture** view shows the four layers of the package with the
-modules on them at their real sizes, and lights up the ones that particular tool walks - `corpus_info` reads
-the corpus and stops; `check_citations` goes through the citation reader, the Act index and the audit before
-it answers. Each is one self-contained HTML file with a poster and a clip beside it - no build step, no
-dependencies, no network.
-
-All 19 are in [`docs/isometric/`](docs/isometric/) — [start at the index](docs/isometric/index.html). 10
-architecture, 9 flow.
-
-![pak-law-assistant](docs/isometric/scenes/arch-paklaw.gif)
-*The four layers, the modules on them at their real sizes, and the path one call takes: `mcp_server` to
-`corpus` and `act_index`, down through `split` and `retrieve`, then `citation`, `audit`, `answer`, and the
-telemetry line that records the tool but never the question.* · [open the
-animation](docs/isometric/scenes/arch-paklaw.html) · [mp4](docs/isometric/scenes/arch-paklaw.mp4)
-
-![one question, token by token](docs/isometric/scenes/arch-paklaw-retrieval.png)
-*The same question at the level of its words: folded, stopwords dropped, stemmed, matched against the
-postings for one date only, scored - and either cited, or refused with the words it looked for named.* ·
-[open the animation](docs/isometric/scenes/arch-paklaw-retrieval.html) ·
-[mp4](docs/isometric/scenes/arch-paklaw-retrieval.mp4)
-
-![corpus_info](docs/isometric/scenes/arch-paklaw-corpus-info.png)
-*The same four layers, for the one tool that touches fewest of them: `corpus_info` reads what is loaded and
-counts it, and the point of it is that its answer is what every other claim about the corpus can be checked
-against.* · [open the animation](docs/isometric/scenes/arch-paklaw-corpus-info.html) ·
-[mp4](docs/isometric/scenes/arch-paklaw-corpus-info.mp4)
-
-![answer_question](docs/isometric/scenes/flow-paklaw-answer-question.png)
-*The flow view of one tool: "What is the punishment for cyber stalking?" as of 1 January 2018 goes in,
-section 24 PECA with its in-force window comes out, and the five stages in between each say what they did.*
-· [open the animation](docs/isometric/scenes/flow-paklaw-answer-question.html) ·
-[mp4](docs/isometric/scenes/flow-paklaw-answer-question.mp4)
-
-
 ## Sample input / output
 
 `python demo.py` runs on a three-provision sample that carries PECA s.20 before and after its 2022 substitution
